@@ -98,43 +98,46 @@ async function scrapeETerritoire(dateFrom) {
   for (const pageUrl of PAGES) {
     try {
       const res = await fetch(pageUrl, {
-        headers: { 'User-Agent': 'SoirFR/1.0 (contact@soirfr.com)', 'Accept': 'text/html' }
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml',
+          'Accept-Language': 'fr-FR,fr;q=0.9',
+          'Referer': 'https://www.eterritoire.fr/'
+        }
       });
       if (!res.ok) continue;
       const html = await res.text();
 
-      // Extract event detail URLs from listings
-      // Format: /detail/[cat]/[slug]/[id]/[location]
-      const detailUrls = [...new Set(
-        [...html.matchAll(/href="(\/detail\/[^"]+)"/g)].map(m => BASE + m[1])
-      )];
+      // Try JSON-LD on the listing page itself
+      const r = await extractJsonLd(html, '71', 'Bourgogne-Franche-Comté', 'eterritoire', pageUrl, dateFrom, null);
+      found += r.found; added += r.added;
 
-      for (const detailUrl of detailUrls.slice(0, 20)) {
-        try {
-          await sleep(200);
-          const dr = await fetch(detailUrl, {
-            headers: { 'User-Agent': 'SoirFR/1.0' }
-          });
-          if (!dr.ok) continue;
-          const dhtml = await dr.text();
-
-          // Extract JSON-LD
-          const r = await extractJsonLd(dhtml, '71', 'Bourgogne-Franche-Comté', 'eterritoire', detailUrl, dateFrom, null);
-          found += r.found; added += r.added;
-
-          // If no JSON-LD, parse HTML directly
-          if (r.found === 0) {
-            const ev = parseETerritorePage(dhtml, detailUrl);
-            if (ev && ev.starts_at >= dateFrom) {
-              found++;
-              const ins = await insertEvent({ ...ev, source_name: 'eterritoire', source_url: detailUrl, department: '71', region: 'Bourgogne-Franche-Comté' });
-              if (ins) added++;
-            }
-          }
-        } catch {}
+      // Also extract event blocks directly from listing HTML
+      // eTerritoire listing shows: title, date, city, category, image in each card
+      const cards = [...html.matchAll(/href="(\/detail\/([^"]+))"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>[\s\S]*?Le (\d{2}\/\d{2}\/\d{4})/g)];
+      for (const card of cards) {
+        const detailPath = card[1];
+        const slug = card[2];
+        const title = card[3].trim();
+        const rawDate = card[4]; // DD/MM/YYYY
+        const parts = rawDate.split('/');
+        const startDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        if (startDate < dateFrom) continue;
+        found++;
+        const ins = await insertEvent({
+          title,
+          category: mapCat(slug.split('/')[0] + ' ' + title),
+          department: '71',
+          region: 'Bourgogne-Franche-Comté',
+          starts_at: startDate,
+          source_url: 'https://www.eterritoire.fr' + detailPath,
+          source_event_id: (title + startDate).replace(/[^a-z0-9]/gi,'_').slice(0,200),
+          source_name: 'eterritoire',
+        });
+        if (ins) added++;
       }
     } catch {}
-    await sleep(800);
+    await sleep(600);
   }
   return { source: 'eTerritoire BFC', found, added };
 }
