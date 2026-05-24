@@ -68,6 +68,12 @@ module.exports = async function handler(req, res) {
     catch (e) { errors.push({ source: 'ticketmaster', error: e.message }); }
   }
 
+  // Geocode any events missing coordinates using city/postcode
+  try {
+    const geocoded = await geocodeMissingEvents();
+    results.push({ source: 'geocoder', found: geocoded, added: geocoded });
+  } catch(e) { errors.push({ source: 'geocoder', error: e.message }); }
+
   const total_added = results.reduce((s,r) => s+(r.added||0), 0);
   const total_found = results.reduce((s,r) => s+(r.found||0), 0);
 
@@ -582,6 +588,53 @@ async function sbFetch(path,method='GET',body=null) {
 }
 
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+// ── Geocode events missing coordinates ───────────────────────────────────
+async function geocodeMissingEvents() {
+  // Get events with no location but have city or postcode
+  const missing = await sbFetch(
+    "events?select=id,city,postcode,address&location=is.null&status=eq.active&limit=100",
+    'GET'
+  );
+  if (!missing || !missing.length) return 0;
+
+  let geocoded = 0;
+  for (const ev of missing) {
+    const query = [ev.address, ev.city, ev.postcode, 'France']
+      .filter(Boolean).join(' ');
+    if (!query.trim()) continue;
+
+    try {
+      const r = await fetch(
+        `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1`
+      );
+      if (!r.ok) continue;
+      const data = await r.json();
+      const feat = data.features?.[0];
+      if (!feat) continue;
+
+      const lng = feat.geometry.coordinates[0];
+      const lat = feat.geometry.coordinates[1];
+      const city = feat.properties.city || feat.properties.municipality || ev.city;
+
+      // Update via PATCH
+      const res = await fetch(`${SB_URL}/rest/v1/events?id=eq.${ev.id}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({
+          location: `POINT(${lng} ${lat})`,
+          city: ev.city || city,
+        })
+      });
+      if (res.ok) geocoded++;
+      await sleep(100); // be gentle with the geocoding API
+    } catch {}
+  }
+  return geocoded;
+}
 
 function mapCat(raw) {
   if(!raw) return 'autre'; const r=raw.toLowerCase();
