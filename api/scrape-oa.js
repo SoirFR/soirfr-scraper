@@ -11,7 +11,20 @@ module.exports = async function handler(req, res) {
   }
   if (!OA_KEY) return res.status(500).json({ error: 'No OA key' });
 
-  const dateFrom = '2026-06-26'; // start after our latest stored event
+  // Start from day after our latest stored OpenAgenda event (auto-advances each run)
+  let dateFrom = new Date().toISOString().split('T')[0];
+  try {
+    const latestRes = await fetch(
+      `${SB_URL}/rest/v1/events?source_name=eq.openagenda_api&select=starts_at&order=starts_at.desc&limit=1`,
+      { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+    );
+    const latest = await latestRes.json();
+    if (latest?.[0]?.starts_at) {
+      const d = new Date(latest[0].starts_at);
+      d.setDate(d.getDate() + 1);
+      dateFrom = d.toISOString().split('T')[0];
+    }
+  } catch {}
   const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
   const results = [], errors = [];
 
