@@ -1,4 +1,5 @@
-// SoirFR — OpenAgenda only scraper (fast, <30 seconds)
+// SoirFR — OpenAgenda fast scraper
+// Batch dedup — much faster than per-event checks
 const SB_URL = 'https://ebinsidruxvbzukobshf.supabase.co';
 const SB_KEY = 'sb_publishable_QSnlPXEopb6x8m8N3K396Q_YPazJ0IM';
 
@@ -15,97 +16,90 @@ module.exports = async function handler(req, res) {
   const results = [], errors = [];
 
   for (const dept of ['71','21','58','89']) {
-    let after = null;
-    let deptFound = 0, deptAdded = 0;
-    // Fetch up to 3 pages of 100 = 300 events per department
-    for (let page = 0; page < 3; page++) {
-      try {
-        const params = new URLSearchParams({
-          key: OA_KEY, size: 100,
-          'timings[gte]': dateFrom,
-          'timings[lte]': dateTo,
-          'location[department]': dept,
-          detailed: 1,
-          sort: 'timings.asc',
-        });
-        if (after) after.forEach(a => params.append('after[]', a));
-        const r = await fetch(`https://api.openagenda.com/v2/events?${params}`);
-        if (!r.ok) { errors.push({ dept, page, status: r.status }); break; }
-        const data = await r.json();
-        const events = data.events || [];
-        if (!events.length) break;
-        after = data.after; // pagination cursor
-        for (const ev of events) {
-          const t = ev.timings?.[0]; if (!t) continue;
-          const ins = await insertEvent({
-            title: ev.title?.fr || ev.title?.en || 'Événement',
-            description: ev.description?.fr?.slice(0,1000),
+    try {
+      // Fetch 100 events from OpenAgenda
+      const params = new URLSearchParams({
+        key: OA_KEY, size: 100,
+        'timings[gte]': dateFrom,
+        'timings[lte]': dateTo,
+        'location[department]': dept,
+        detailed: 1,
+        sort: 'timings.asc',
+      });
+      const r = await fetch(`https://api.openagenda.com/v2/events?${params}`);
+      if (!r.ok) { errors.push({ dept, status: r.status }); continue; }
+      const data = await r.json();
+      const events = (data.events || []).filter(ev => ev.timings?.[0]);
+      if (!events.length) { results.push({ dept, found: 0, added: 0 }); continue; }
+
+      // Batch dedup — get all existing IDs for this dept in one query
+      const uids = events.map(ev => String(ev.uid));
+      const existingRes = await fetch(
+        `${SB_URL}/rest/v1/events?source_name=eq.openagenda_api&select=source_event_id&limit=500`,
+        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+      );
+      const existing = await existingRes.json();
+      const existingIds = new Set((existing || []).map(e => e.source_event_id));
+
+      // Filter to only new events
+      const newEvents = events.filter(ev => !existingIds.has(String(ev.uid)));
+
+      // Batch insert all new events at once
+      let added = 0;
+      if (newEvents.length > 0) {
+        const rows = newEvents.map(ev => {
+          const t = ev.timings[0];
+          const lat = parseFloat(ev.location?.latitude);
+          const lng = parseFloat(ev.location?.longitude);
+          const loc = (!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0) ? `POINT(${lng} ${lat})` : null;
+          return {
+            title: String(ev.title?.fr || ev.title?.en || 'Événement').slice(0,500),
+            description: ev.description?.fr?.slice(0,1000) || null,
             category: mapCat(ev.keywords?.fr?.[0] || ''),
-            address: ev.location?.address,
-            city: ev.location?.city,
-            postcode: ev.location?.postalCode,
+            address: ev.location?.address || null,
+            city: ev.location?.city || null,
+            postcode: ev.location?.postalCode || null,
             department: dept,
             region: 'Bourgogne-Franche-Comté',
-            lat: ev.location?.latitude,
-            lng: ev.location?.longitude,
-            starts_at: t.begin, ends_at: t.end,
+            country: 'FR',
+            location: loc,
+            starts_at: t.begin,
+            ends_at: t.end || null,
             image_url: ev.image ? `${ev.image.base}${ev.image.filename}` : null,
             is_free: ev.conditions?.fr?.toLowerCase().includes('gratuit') || false,
             booking_url: ev.registration?.[0]?.value || null,
+            source_type: 'scraper',
+            source_name: 'openagenda_api',
             source_url: `https://openagenda.com/events/${ev.slug}`,
             source_event_id: String(ev.uid),
-            source_name: 'openagenda_api',
+            status: 'active',
+            scraped_at: new Date().toISOString(),
+          };
+        });
+
+        // Insert in batches of 50
+        for (let i = 0; i < rows.length; i += 50) {
+          const batch = rows.slice(i, i + 50);
+          const ins = await fetch(`${SB_URL}/rest/v1/events`, {
+            method: 'POST',
+            headers: {
+              'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
+              'Content-Type': 'application/json', 'Prefer': 'return=minimal'
+            },
+            body: JSON.stringify(batch)
           });
-          if (ins) deptAdded++;
-          deptFound++;
+          if (ins.ok) added += batch.length;
         }
-        await sleep(200);
-        if (!after) break;
-      } catch(e) { errors.push({ dept, page, error: e.message }); break; }
-    }
-    results.push({ dept, found: deptFound, added: deptAdded });
+      }
+
+      results.push({ dept, found: events.length, new: newEvents.length, added });
+    } catch(e) { errors.push({ dept, error: e.message }); }
   }
 
   const total_added = results.reduce((s,r) => s+(r.added||0), 0);
   const total_found = results.reduce((s,r) => s+(r.found||0), 0);
   return res.status(200).json({ success: true, total_added, total_found, results, errors });
 };
-
-async function insertEvent(ev) {
-  if (!ev.title || !ev.starts_at) return false;
-  if (ev.source_event_id) {
-    const existing = await sbFetch(`events?source_name=eq.openagenda_api&source_event_id=eq.${ev.source_event_id}&select=id`, 'GET');
-    if (existing?.length > 0) return false;
-  }
-  const lat = parseFloat(ev.lat), lng = parseFloat(ev.lng);
-  const loc = (!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0) ? `POINT(${lng} ${lat})` : null;
-  return await sbFetch('events', 'POST', {
-    title: String(ev.title).slice(0,500), description: ev.description||null,
-    category: ev.category||'autre', address: ev.address||null,
-    city: ev.city||null, postcode: ev.postcode||null,
-    department: ev.department||null, region: ev.region||null, country: 'FR',
-    location: loc, starts_at: ev.starts_at, ends_at: ev.ends_at||null,
-    image_url: ev.image_url||null, is_free: ev.is_free||false,
-    booking_url: ev.booking_url||null, source_type: 'scraper',
-    source_name: ev.source_name, source_url: ev.source_url||null,
-    source_event_id: ev.source_event_id||null,
-    status: 'active', scraped_at: new Date().toISOString(),
-  });
-}
-
-async function sbFetch(path, method='GET', body=null) {
-  try {
-    const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
-      method, body: body ? JSON.stringify(body) : null,
-      headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
-        'Content-Type': 'application/json', 'Prefer': method==='POST'?'return=minimal':'' }
-    });
-    if (method==='GET') return await res.json();
-    return res.ok;
-  } catch { return null; }
-}
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 function mapCat(raw) {
   if (!raw) return 'autre'; const r = raw.toLowerCase();
