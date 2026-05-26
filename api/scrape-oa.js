@@ -1,7 +1,15 @@
-// SoirFR — OpenAgenda fast scraper
-// Batch dedup — much faster than per-event checks
+// SoirFR — OpenAgenda scraper with geographic bounding box
+// Uses lat/lng coordinates to ensure only real Burgundy events are pulled
 const SB_URL = 'https://ebinsidruxvbzukobshf.supabase.co';
 const SB_KEY = 'sb_publishable_QSnlPXEopb6x8m8N3K396Q_YPazJ0IM';
+
+// Burgundy bounding box — tight around BFC region
+const REGIONS = [
+  { name: 'Saône-et-Loire',  latMin: 46.15, latMax: 47.10, lngMin: 3.90, lngMax: 5.40, dept: '71' },
+  { name: 'Côte-d\'Or',      latMin: 46.90, latMax: 47.95, lngMin: 4.00, lngMax: 5.60, dept: '21' },
+  { name: 'Nièvre',          latMin: 46.55, latMax: 47.60, lngMin: 2.90, lngMax: 4.20, dept: '58' },
+  { name: 'Yonne',           latMin: 47.30, latMax: 48.40, lngMin: 2.80, lngMax: 4.40, dept: '89' },
+];
 
 module.exports = async function handler(req, res) {
   const CRON_SECRET = process.env.CRON_SECRET;
@@ -11,7 +19,7 @@ module.exports = async function handler(req, res) {
   }
   if (!OA_KEY) return res.status(500).json({ error: 'No OA key' });
 
-  // Start from day after our latest stored OpenAgenda event (auto-advances each run)
+  // Start from day after latest stored event
   let dateFrom = new Date().toISOString().split('T')[0];
   try {
     const latestRes = await fetch(
@@ -28,51 +36,59 @@ module.exports = async function handler(req, res) {
   const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
   const results = [], errors = [];
 
-  for (const dept of ['71','21','58','89']) {
+  // Get existing IDs once for batch dedup
+  const existingRes = await fetch(
+    `${SB_URL}/rest/v1/events?source_name=eq.openagenda_api&select=source_event_id&limit=2000`,
+    { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
+  );
+  const existing = await existingRes.json();
+  const existingIds = new Set((existing || []).map(e => e.source_event_id));
+
+  for (const region of REGIONS) {
     try {
-      // Fetch 100 events from OpenAgenda
+      // Use geographic bounding box — guarantees events are physically in Burgundy
       const params = new URLSearchParams({
-        key: OA_KEY, size: 100,
+        key: OA_KEY,
+        size: 100,
         'timings[gte]': dateFrom,
         'timings[lte]': dateTo,
-        'location[department]': dept,
+        'geo[northEast][lat]': region.latMax,
+        'geo[northEast][lng]': region.lngMax,
+        'geo[southWest][lat]': region.latMin,
+        'geo[southWest][lng]': region.lngMin,
         detailed: 1,
         sort: 'timings.asc',
       });
+
       const r = await fetch(`https://api.openagenda.com/v2/events?${params}`);
-      if (!r.ok) { errors.push({ dept, status: r.status }); continue; }
+      if (!r.ok) { errors.push({ region: region.name, status: r.status }); continue; }
       const data = await r.json();
       const events = (data.events || []).filter(ev => ev.timings?.[0]);
-      if (!events.length) { results.push({ dept, found: 0, added: 0 }); continue; }
-
-      // Batch dedup — get all existing IDs for this dept in one query
-      const uids = events.map(ev => String(ev.uid));
-      const existingRes = await fetch(
-        `${SB_URL}/rest/v1/events?source_name=eq.openagenda_api&select=source_event_id&limit=500`,
-        { headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` } }
-      );
-      const existing = await existingRes.json();
-      const existingIds = new Set((existing || []).map(e => e.source_event_id));
+      if (!events.length) { results.push({ region: region.name, found: 0, added: 0 }); continue; }
 
       // Filter to only new events
       const newEvents = events.filter(ev => !existingIds.has(String(ev.uid)));
 
-      // Batch insert all new events at once
       let added = 0;
       if (newEvents.length > 0) {
         const rows = newEvents.map(ev => {
           const t = ev.timings[0];
           const lat = parseFloat(ev.location?.latitude);
           const lng = parseFloat(ev.location?.longitude);
-          const loc = (!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0) ? `POINT(${lng} ${lat})` : null;
+          // Double-check coords are actually within Burgundy bounding box
+          const inRegion = lat >= region.latMin && lat <= region.latMax &&
+                           lng >= region.lngMin && lng <= region.lngMax;
+          const loc = (inRegion) ? `POINT(${lng} ${lat})` : null;
+          // Add to existingIds to avoid dupes within same run
+          existingIds.add(String(ev.uid));
           return {
-            title: String(ev.title?.fr || ev.title?.en || 'Événement').slice(0,500),
-            description: ev.description?.fr?.slice(0,1000) || null,
+            title: String(ev.title?.fr || ev.title?.en || 'Événement').slice(0, 500),
+            description: ev.description?.fr?.slice(0, 1000) || null,
             category: mapCat(ev.keywords?.fr?.[0] || ''),
             address: ev.location?.address || null,
             city: ev.location?.city || null,
             postcode: ev.location?.postalCode || null,
-            department: dept,
+            department: region.dept,
             region: 'Bourgogne-Franche-Comté',
             country: 'FR',
             location: loc,
@@ -88,9 +104,9 @@ module.exports = async function handler(req, res) {
             status: 'active',
             scraped_at: new Date().toISOString(),
           };
-        });
+        }).filter(r => r.location !== null); // only insert if we have real coords
 
-        // Insert in batches of 50
+        // Batch insert
         for (let i = 0; i < rows.length; i += 50) {
           const batch = rows.slice(i, i + 50);
           const ins = await fetch(`${SB_URL}/rest/v1/events`, {
@@ -105,13 +121,13 @@ module.exports = async function handler(req, res) {
         }
       }
 
-      results.push({ dept, found: events.length, new: newEvents.length, added });
-    } catch(e) { errors.push({ dept, error: e.message }); }
+      results.push({ region: region.name, found: events.length, new: newEvents.length, added });
+    } catch(e) { errors.push({ region: region.name, error: e.message }); }
   }
 
   const total_added = results.reduce((s,r) => s+(r.added||0), 0);
   const total_found = results.reduce((s,r) => s+(r.found||0), 0);
-  return res.status(200).json({ success: true, total_added, total_found, results, errors });
+  return res.status(200).json({ success: true, total_added, total_found, dateFrom, results, errors });
 };
 
 function mapCat(raw) {
