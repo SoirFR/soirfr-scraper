@@ -12,9 +12,7 @@ module.exports = async function handler(req, res) {
   if (!OA_KEY) return res.status(500).json({ error: 'No OA key' });
 
   const dateFrom = new Date().toISOString().split('T')[0];
-  const dateTo = new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0];
-  const results = [], errors = [];
-
+const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];  const results = [], errors = [];
   for (const dept of ['71','21','58','89']) {
     try {
       // Fetch 100 events from OpenAgenda
