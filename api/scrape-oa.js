@@ -99,7 +99,7 @@ module.exports = async function handler(req, res) {
             booking_url: ev.registration?.[0]?.value || null,
             source_type: 'scraper',
             source_name: 'openagenda_api',
-            source_url: `https://openagenda.com/events/${ev.slug}`,
+            source_url: ev.originAgenda?.uid    ? `https://openagenda.com/agendas/${ev.originAgenda.uid}/events/${ev.slug}`   : `https://openagenda.com/events/${ev.slug}-${ev.uid}`,
             source_event_id: String(ev.uid),
             status: 'active',
             scraped_at: new Date().toISOString(),
