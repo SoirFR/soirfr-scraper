@@ -96,8 +96,9 @@ module.exports = async function handler(req, res) {
             ends_at: t.end || null,
             image_url: ev.image ? `${ev.image.base}${ev.image.filename}` : null,
             is_free: ev.conditions?.fr?.toLowerCase().includes('gratuit') || false,
-            booking_url: ev.registration?.[0]?.value || null,
-            source_type: 'scraper',
+booking_url: ev.registration?.[0]?.value?.startsWith('http') 
+  ? ev.registration[0].value 
+  : null,            source_type: 'scraper',
             source_name: 'openagenda_api',
             source_url: ev.originAgenda?.uid    ? `https://openagenda.com/agendas/${ev.originAgenda.uid}/events/${ev.slug}`   : `https://openagenda.com/events/${ev.slug}-${ev.uid}`,
             source_event_id: String(ev.uid),
