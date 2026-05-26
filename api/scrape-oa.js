@@ -15,45 +15,55 @@ module.exports = async function handler(req, res) {
   const results = [], errors = [];
 
   for (const dept of ['71','21','58','89']) {
-    try {
-      const params = new URLSearchParams({
-        key: OA_KEY, size: 100,
-        'timings[gte]': dateFrom,
-        'timings[lte]': dateTo,
-        'location[department]': dept,
-        detailed: 1
-      });
-      const r = await fetch(`https://api.openagenda.com/v2/events?${params}`);
-      if (!r.ok) { errors.push({ dept, status: r.status }); continue; }
-      const data = await r.json();
-      const events = data.events || [];
-      let added = 0;
-      for (const ev of events) {
-        const t = ev.timings?.[0]; if (!t) continue;
-        const ins = await insertEvent({
-          title: ev.title?.fr || ev.title?.en || 'Événement',
-          description: ev.description?.fr?.slice(0,1000),
-          category: mapCat(ev.keywords?.fr?.[0] || ''),
-          address: ev.location?.address,
-          city: ev.location?.city,
-          postcode: ev.location?.postalCode,
-          department: dept,
-          region: 'Bourgogne-Franche-Comté',
-          lat: ev.location?.latitude,
-          lng: ev.location?.longitude,
-          starts_at: t.begin, ends_at: t.end,
-          image_url: ev.image ? `${ev.image.base}${ev.image.filename}` : null,
-          is_free: ev.conditions?.fr?.toLowerCase().includes('gratuit') || false,
-          booking_url: ev.registration?.[0]?.value || null,
-          source_url: `https://openagenda.com/events/${ev.slug}`,
-          source_event_id: String(ev.uid),
-          source_name: 'openagenda_api',
+    let after = null;
+    let deptFound = 0, deptAdded = 0;
+    // Fetch up to 3 pages of 100 = 300 events per department
+    for (let page = 0; page < 3; page++) {
+      try {
+        const params = new URLSearchParams({
+          key: OA_KEY, size: 100,
+          'timings[gte]': dateFrom,
+          'timings[lte]': dateTo,
+          'location[department]': dept,
+          detailed: 1,
+          sort: 'timings.asc',
         });
-        if (ins) added++;
-      }
-      results.push({ dept, found: events.length, added });
-      await sleep(300);
-    } catch(e) { errors.push({ dept, error: e.message }); }
+        if (after) after.forEach(a => params.append('after[]', a));
+        const r = await fetch(`https://api.openagenda.com/v2/events?${params}`);
+        if (!r.ok) { errors.push({ dept, page, status: r.status }); break; }
+        const data = await r.json();
+        const events = data.events || [];
+        if (!events.length) break;
+        after = data.after; // pagination cursor
+        for (const ev of events) {
+          const t = ev.timings?.[0]; if (!t) continue;
+          const ins = await insertEvent({
+            title: ev.title?.fr || ev.title?.en || 'Événement',
+            description: ev.description?.fr?.slice(0,1000),
+            category: mapCat(ev.keywords?.fr?.[0] || ''),
+            address: ev.location?.address,
+            city: ev.location?.city,
+            postcode: ev.location?.postalCode,
+            department: dept,
+            region: 'Bourgogne-Franche-Comté',
+            lat: ev.location?.latitude,
+            lng: ev.location?.longitude,
+            starts_at: t.begin, ends_at: t.end,
+            image_url: ev.image ? `${ev.image.base}${ev.image.filename}` : null,
+            is_free: ev.conditions?.fr?.toLowerCase().includes('gratuit') || false,
+            booking_url: ev.registration?.[0]?.value || null,
+            source_url: `https://openagenda.com/events/${ev.slug}`,
+            source_event_id: String(ev.uid),
+            source_name: 'openagenda_api',
+          });
+          if (ins) deptAdded++;
+          deptFound++;
+        }
+        await sleep(200);
+        if (!after) break;
+      } catch(e) { errors.push({ dept, page, error: e.message }); break; }
+    }
+    results.push({ dept, found: deptFound, added: deptAdded });
   }
 
   const total_added = results.reduce((s,r) => s+(r.added||0), 0);
