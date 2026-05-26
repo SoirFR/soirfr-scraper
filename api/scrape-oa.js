@@ -11,7 +11,7 @@ module.exports = async function handler(req, res) {
   }
   if (!OA_KEY) return res.status(500).json({ error: 'No OA key' });
 
-  const dateFrom = new Date().toISOString().split('T')[0];
+  const dateFrom = '2026-06-26'; // start after our latest stored event
   const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
   const results = [], errors = [];
 
