@@ -2,7 +2,23 @@
   "crons": [
     {
       "path": "/api/scrape",
-      "schedule": "0 5 * * *"
+      "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/scrape-oa",
+      "schedule": "0 7 * * *"
+    },
+    {
+      "path": "/api/scrape-markets",
+      "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/scrape-vostickets",
+      "schedule": "0 8 * * 1"
+    },
+    {
+      "path": "/api/scrape-recurring",
+      "schedule": "0 9 * * 1"
     }
   ]
 }
