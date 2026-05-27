@@ -680,6 +680,13 @@ function isJunk(title, description) {
     // Medical/admin
     'bilan de santé', 'permanence sociale',
     'permanence juridique', 'permanence administrative',
+    // Social/retirement agency events
+    'carsat', 'cnav', 'caf de ', 'caf du ',
+    'mutualité française', 'cpam', 'urssaf',
+    // Formation/training events — broad match
+    ' formation ', 'de formation', 'en formation',
+    'stage de ', 'atelier de formation',
+    'session de formation', 'formation professionnelle',
   ];
 
   return junkPhrases.some(kw => t.includes(kw));
@@ -701,7 +708,7 @@ function mapCat(raw) {
   if(/brocante|vide.grenier|vide grenier|puces|braderie/.test(r)) return 'brocante';
   if(/marché|marchés du/.test(r)) return 'marche';
   // Sport: only clear sports activities, NOT job events with transport/logistics keywords
-  if(/yoga|marathon|trail|triathlon|cyclisme|natation|rugby|basket|tennis|football|volley|escalade|karaté|judo|tournoi sportif|compétition sportive/.test(r)) return 'sport';
+  if(/yoga|marathon|trail|triathlon|cyclisme|natation|rugby|basket|tennis|football|volley|escalade|karaté|judo|tournoi sportif|compétition sportive|\bvélo\b|\bcycliste\b|balade vélo|vélo balade/.test(r)) return 'sport';
   if(/randonnée|balade|nature|forêt|jardin|botanique|faune|flore/.test(r)) return 'nature';
   if(/festival|fête|fête de|foire de|carnaval|kermesse/.test(r)) return 'fete';
   if(/atelier|workshop|initiation/.test(r)) return 'ateliers';
