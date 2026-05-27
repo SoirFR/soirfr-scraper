@@ -5,17 +5,9 @@ const SB_URL = 'https://ebinsidruxvbzukobshf.supabase.co';
 const SB_KEY = 'sb_publishable_QSnlPXEopb6x8m8N3K396Q_YPazJ0IM';
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36';
 
-// Known VosTickets slugs for Burgundy towns/venues
-// Format: { slug, city, dept, lat, lng }
+// Only confirmed working VosTickets pages for Burgundy
 const CATALOGUES = [
-  { slug: 'CHAGNY',        city: 'Chagny',              dept: '71', lat: 46.9147, lng: 4.7558 },
-  { slug: 'CONSERVATOIRE', city: 'Chalon-sur-Saône',    dept: '71', lat: 46.7803, lng: 4.8534 },
-  { slug: 'AUTUN',         city: 'Autun',               dept: '71', lat: 46.9527, lng: 4.2994 },
-  { slug: 'MACON',         city: 'Mâcon',               dept: '71', lat: 46.3057, lng: 4.8317 },
-  { slug: 'BEAUNE',        city: 'Beaune',              dept: '21', lat: 47.0261, lng: 4.8357 },
-  { slug: 'DIJON',         city: 'Dijon',               dept: '21', lat: 47.3167, lng: 5.0414 },
-  { slug: 'CLUNY',         city: 'Cluny',               dept: '71', lat: 46.4346, lng: 4.6574 },
-  { slug: 'SAISON_CULTURELLE', city: 'Bourgogne',       dept: '71', lat: 46.6614, lng: 4.6337 },
+  { slug: 'CHAGNY', city: 'Chagny', dept: '71', lat: 46.9147, lng: 4.7558 },
 ];
 
 module.exports = async function handler(req, res) {
@@ -38,9 +30,13 @@ module.exports = async function handler(req, res) {
   for (const cat of CATALOGUES) {
     try {
       const url = `https://www.vostickets.net/billet/FR/catalogue-${cat.slug}.wb`;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
       const res2 = await fetch(url, {
-        headers: { 'User-Agent': UA, 'Accept': 'text/html' }
+        headers: { 'User-Agent': UA, 'Accept': 'text/html' },
+        signal: controller.signal
       });
+      clearTimeout(timeout);
       if (!res2.ok) { results.push({ slug: cat.slug, found: 0, added: 0, status: res2.status }); continue; }
       const html = await res2.text();
 
