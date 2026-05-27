@@ -16,7 +16,7 @@ module.exports = async function handler(req, res) {
 
   const results = [], errors = [];
   const dateFrom = new Date().toISOString().split('T')[0];
-  const dateTo = new Date(Date.now() + 60 * 86400000).toISOString().split('T')[0];
+  const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
 
   // ── 1. eTerritoire Bourgogne-Franche-Comté ──────────────────────────────
   // Confirmed: 4,528 events for dept 71 alone, paginated at /2 /3 etc.
@@ -554,6 +554,7 @@ async function extractJsonLd(html, dept, region, sourceName, baseUrl, dateFrom, 
 // ── Insert with dedup ─────────────────────────────────────────────────────
 async function insertEvent(ev) {
   if (!ev.title||!ev.starts_at) return false;
+  if (isJunk(ev.title, ev.description)) return false;
   if (ev.source_event_id&&ev.source_name) {
     const id = String(ev.source_event_id).slice(0,200);
     const existing = await sbFetch(`events?source_name=eq.${encodeURIComponent(ev.source_name)}&source_event_id=eq.${encodeURIComponent(id)}&select=id`, 'GET');
@@ -634,6 +635,24 @@ async function geocodeMissingEvents() {
     } catch {}
   }
   return geocoded;
+}
+
+function isJunk(title, description) {
+  if (!title) return true;
+  const t = title.toLowerCase();
+  const junkTerms = [
+    'manpower','adecco','france travail','pôle emploi',
+    'job corner','job dating','job forum',
+    'recrutement sans cv','préparateur de commandes',
+    'équipier de production industrielle','conducteur de ligne en contrat',
+    'formation en soudure','formation frigoriste','formation agent d'accueil',
+    'uimm','asimat','axdom','plie ',
+    'document unique d'evaluation des risques',
+    'transfert de gros fichiers','les fichiers pdf',
+    'découvrez facebook simplement','déchetterie mobile',
+    'super u de ','u express ',
+  ];
+  return junkTerms.some(kw => t.includes(kw));
 }
 
 function mapCat(raw) {
