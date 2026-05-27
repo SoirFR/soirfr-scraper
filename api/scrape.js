@@ -656,7 +656,7 @@ function isJunk(title, description) {
 }
 
 function mapCat(raw) {
-  if(!raw) return 'autre'; const r=raw.toLowerCase();
+  if(!raw) return 'expo'; const r=raw.toLowerCase();
   if(/concert|musique|music|jazz|rock|chanson|orchestre|piano|chorale|chant|variété|festival.*music/.test(r)) return 'musique';
   if(/cin[eé]|film|projection|documentaire/.test(r)) return 'cinema';
   if(/th[eé][aâ]tre|spectacle|com[eé]die|danse|ballet|cirque|stand.up|conte|lecture/.test(r)) return 'theatre';
@@ -670,5 +670,5 @@ function mapCat(raw) {
   if(/nature|for[eê]t|jardin|[eé]cologie/.test(r)) return 'nature';
   if(/festival|f[eê]te\b|fete|carnaval|foire\b/.test(r)) return 'fete';
   if(/conf[eé]rence|d[eé]bat|atelier\b|formation|colloque|patrimoine|histoire/.test(r)) return 'conference';
-  return 'autre';
+  return 'expo';
 }
