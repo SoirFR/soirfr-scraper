@@ -2,7 +2,8 @@
   "name": "soirfr-scraper",
   "version": "1.0.0",
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0",
-    "cheerio": "^1.0.0-rc.12"
+"@anthropic-ai/sdk": "^0.32.0",
+"@supabase/supabase-js": "^2.45.0",
+"busboy": "^1.6.0"
   }
 }
