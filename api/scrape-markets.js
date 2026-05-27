@@ -39,10 +39,13 @@ module.exports = async function handler(req, res) {
     try {
       // Fetch department page to get all postcode links
       const deptRes = await fetch(`${BASE}/${dept.slug}/`, {
-        headers: { 'User-Agent': UA, 'Accept': 'text/html' }
+        headers: { 'User-Agent': UA, 'Accept': 'text/html,application/xhtml+xml', 'Accept-Language': 'fr-FR,fr;q=0.9' }
       });
       if (!deptRes.ok) { errors.push({ dept: dept.dept, error: `HTTP ${deptRes.status}` }); continue; }
       const deptHtml = await deptRes.text();
+
+      // Debug: log first 200 chars to see what we got
+      errors.push({ dept: dept.dept, debug: deptHtml.slice(0,200), htmlLen: deptHtml.length });
 
       // Extract postcode city links: /71150-chagny/ format
       const postcodeLinks = [...new Set(
