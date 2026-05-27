@@ -71,7 +71,12 @@ module.exports = async function handler(req, res) {
 
       let added = 0;
       if (newEvents.length > 0) {
-        const rows = newEvents.map(ev => {
+        // Filter out junk events before building rows
+        const cleanEvents = newEvents.filter(ev => 
+          !isJunk(ev.title?.fr || ev.title?.en || '', ev.description?.fr || '')
+        );
+
+        const rows = cleanEvents.map(ev => {
           const t = ev.timings[0];
           const lat = parseFloat(ev.location?.latitude);
           const lng = parseFloat(ev.location?.longitude);
@@ -96,16 +101,15 @@ module.exports = async function handler(req, res) {
             ends_at: t.end || null,
             image_url: ev.image ? `${ev.image.base}${ev.image.filename}` : null,
             is_free: ev.conditions?.fr?.toLowerCase().includes('gratuit') || false,
-booking_url: ev.registration?.[0]?.value?.startsWith('http') 
-  ? ev.registration[0].value 
-  : null,            source_type: 'scraper',
+            booking_url: ev.registration?.[0]?.value || null,
+            source_type: 'scraper',
             source_name: 'openagenda_api',
-            source_url: ev.originAgenda?.uid    ? `https://openagenda.com/agendas/${ev.originAgenda.uid}/events/${ev.slug}`   : `https://openagenda.com/events/${ev.slug}-${ev.uid}`,
+            source_url: `https://openagenda.com/events/${ev.slug}`,
             source_event_id: String(ev.uid),
             status: 'active',
             scraped_at: new Date().toISOString(),
           };
-        }).filter(r => r.location !== null); // only insert if we have real coords
+        }).filter(r => r !== null && r.location !== null); // only insert if we have real coords
 
         // Batch insert
         for (let i = 0; i < rows.length; i += 50) {
@@ -130,6 +134,41 @@ booking_url: ev.registration?.[0]?.value?.startsWith('http')
   const total_found = results.reduce((s,r) => s+(r.found||0), 0);
   return res.status(200).json({ success: true, total_added, total_found, dateFrom, results, errors });
 };
+
+// ── Blocklist — reject clearly commercial/junk events ────────────────────
+function isJunk(title, description) {
+  if (!title) return true;
+  const t = title.toLowerCase();
+
+  // Unambiguous job/recruitment events
+  const junkTerms = [
+    // Recruitment platforms and agencies
+    'manpower', 'adecco', 'france travail', 'pôle emploi',
+    'job corner', 'job dating', 'job forum',
+    // Clearly job-focused titles
+    'recrutement sans cv', 'recrutez sans cv',
+    'découvrez les métiers de l'armée',
+    'présentation des métiers de l'armée',
+    'préparateur de commandes',
+    'équipier de production industrielle',
+    'conducteur de ligne en contrat',
+    'formation en soudure',
+    'formation frigoriste',
+    'formation agent d'accueil',
+    // Specific junk orgs
+    'uimm', 'asimat', 'axdom', 'plie ',
+    // Admin/bureaucratic junk
+    'document unique d'evaluation des risques',
+    'transfert de gros fichiers',
+    'les fichiers pdf',
+    'découvrez facebook simplement',
+    'déchetterie mobile',
+    // Supermarket promos — only very specific brand names
+    'super u de ', 'u express ', 'u express de ',
+  ];
+
+  return junkTerms.some(kw => t.includes(kw));
+}
 
 function mapCat(raw) {
   if (!raw) return 'autre'; const r = raw.toLowerCase();
