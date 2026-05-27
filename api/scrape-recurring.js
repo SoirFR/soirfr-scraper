@@ -76,6 +76,7 @@ module.exports = async function handler(req, res) {
           image_url: src.image_url || null,
           booking_url: src.booking_url || null,
           source_url: src.source_url || null,
+          source_type: 'recurring',
           source_name: 'recurring',
           source_event_id: sourceId,
           status: 'active',
