@@ -138,17 +138,21 @@ export default async function handler(req, res) {
     });
   }
 
-  // 9. Update pending row
+  // 9. Update pending row (don't fail the whole request if this errors —
+  // the event is already published successfully)
+  const updates = {
+    status: 'approved',
+    moderated_at: new Date().toISOString()
+  };
+  if (lat) updates.lat = lat;
+  if (lng) updates.lng = lng;
+  if (publicImageUrl) updates.image_url = publicImageUrl;
+  // approved_event_id is bigint but events.id is uuid — can't store uuid there.
+  // We rely on source_event_id='submission-<id>' in events for the reverse link.
+
   const { error: updateErr } = await supabase
     .from('pending_events')
-    .update({
-      status: 'approved',
-      moderated_at: new Date().toISOString(),
-      approved_event_id: insertedEvent.id,
-      lat,
-      lng,
-      image_url: publicImageUrl
-    })
+    .update(updates)
     .eq('id', id);
 
   if (updateErr) {
