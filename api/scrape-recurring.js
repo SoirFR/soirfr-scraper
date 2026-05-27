@@ -30,6 +30,7 @@ module.exports = async function handler(req, res) {
   const today = now.toISOString().split('T')[0];
   let totalAdded = 0;
   const results = [];
+  let errors = [];
 
   for (const src of sources) {
     let added = 0;
@@ -97,7 +98,12 @@ module.exports = async function handler(req, res) {
           },
           body: JSON.stringify(batch)
         });
-        if (ins.ok) added += batch.length;
+        if (ins.ok) { added += batch.length; }
+        else { 
+          const errText = await ins.text();
+          errors = errors || [];
+          errors.push({ insert_error: errText.slice(0,200), status: ins.status });
+        }
       }
     }
 
@@ -105,5 +111,5 @@ module.exports = async function handler(req, res) {
     results.push({ name: src.name, generated: events.length, added });
   }
 
-  return res.status(200).json({ success: true, total_added: totalAdded, sources: results });
+  return res.status(200).json({ success: true, total_added: totalAdded, sources: results, errors });
 };
