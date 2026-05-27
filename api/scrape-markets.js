@@ -44,8 +44,9 @@ module.exports = async function handler(req, res) {
       if (!deptRes.ok) { errors.push({ dept: dept.dept, error: `HTTP ${deptRes.status}` }); continue; }
       const deptHtml = await deptRes.text();
 
-      // Debug: log first 200 chars to see what we got
-      errors.push({ dept: dept.dept, debug: deptHtml.slice(0,200), htmlLen: deptHtml.length });
+      // Debug: find all href patterns
+      const allHrefs = [...deptHtml.matchAll(/href="([^"]{5,50})"/g)].map(m=>m[1]).filter(h=>h.includes('marche')||h.match(/\/\d{4,5}/)).slice(0,10);
+      errors.push({ dept: dept.dept, sampleHrefs: allHrefs, htmlLen: deptHtml.length });
 
       // Extract postcode city links: /71150-chagny/ format
       const postcodeLinks = [...new Set(
