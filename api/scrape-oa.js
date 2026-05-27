@@ -140,50 +140,71 @@ function isJunk(title, description) {
   if (!title) return true;
   const t = title.toLowerCase();
 
-  // Unambiguous job/recruitment events
-  const junkTerms = [
-    // Recruitment platforms and agencies
+  // Job/recruitment — specific phrases only
+  const junkPhrases = [
+    'recrutement sans cv', 'recrute des ', 'recrute un ', 'recrutez sans',
     'manpower', 'adecco', 'france travail', 'pôle emploi',
     'job corner', 'job dating', 'job forum',
-    // Clearly job-focused titles
-    'recrutement sans cv', 'recrutez sans cv',
-    'découvrez les métiers de l'armée',
-    'présentation des métiers de l'armée',
+    'les mercredis de l'intérim', 'les mardis du transport',
+    'mardis de l'intérim', 'mercredis de l'intérim',
+    'ras interim', 'kelyps', 'interaction interim',
     'préparateur de commandes',
     'équipier de production industrielle',
     'conducteur de ligne en contrat',
-    'formation en soudure',
-    'formation frigoriste',
-    'formation agent d'accueil',
-    // Specific junk orgs
-    'uimm', 'asimat', 'axdom', 'plie ',
-    // Admin/bureaucratic junk
-    'document unique d'evaluation des risques',
-    'transfert de gros fichiers',
-    'les fichiers pdf',
-    'découvrez facebook simplement',
-    'déchetterie mobile',
-    // Supermarket promos — only very specific brand names
-    'super u de ', 'u express ', 'u express de ',
+    'formation en soudure', 'formation frigoriste',
+    'aftral', 'keolis recrutement',
+    'asimat', 'axdom', 'uimm',
+    'document unique d'evaluation',
+    'transfert de gros fichiers', 'les fichiers pdf',
+    'découvrez facebook simplement', 'déchetterie mobile',
+    'super u de ', 'u express de ',
+    'poids lourd', 'conducteur de bus',
+    'devenez chauffeur',
+    'logistique recrutement', 'transport logistique recrutement',
+    // Business/startup events
+    'startbat', 'créateurs entreprise du secteur',
+    'accompagnement des créateurs', 'secteur du bâtiment',
+    'retouche photo', 'création d'entreprise',
+    // More interim/job patterns
+    'les mercredis de l'intérim', 'les mardis de l'intérim',
+    'les mardis du transport', 'les mercredis du transport',
+    'permanence de l'agence', 'permanence leader',
+    'ras interim', 'kelyps', 'actual interim',
+    'forum des métiers', 'forum emploi',
+    'immersion professionnelle', 'découvrez nos métiers',
+    'matinée découverte métier', 'journée découverte métier',
+    // School internal events  
+    'au collège ', 'du collège ', 'clg ',
+    'réunion parents', 'conseil de classe',
+    // Medical/admin
+    'bilan de santé', 'permanence sociale',
+    'permanence juridique', 'permanence administrative',
   ];
 
-  return junkTerms.some(kw => t.includes(kw));
+  return junkPhrases.some(kw => t.includes(kw));
 }
 
 function mapCat(raw) {
-  if (!raw) return 'expo'; const r = raw.toLowerCase();
-  if (/concert|musique|jazz|rock|chanson|chant/.test(r)) return 'musique';
-  if (/cin[eé]|film|projection/.test(r)) return 'cinema';
-  if (/th[eé][aâ]tre|spectacle|danse|ballet/.test(r)) return 'theatre';
-  if (/expo|exposition|galerie|mus[eé]e|vernissage/.test(r)) return 'expo';
-  if (/enfant|famille|jeun|conte/.test(r)) return 'enfants';
-  if (/portes.ouvertes|visite.cave|visite.domaine/.test(r)) return 'portes-ouvertes';
-  if (/d[eé]gustation|vin\b|cave|vignoble|terroir/.test(r)) return 'degustation';
-  if (/brocante|vide.grenier|puces/.test(r)) return 'brocante';
-  if (/march[eé]/.test(r)) return 'marche';
-  if (/sport|foot|tennis|marathon|yoga|v[eé]lo/.test(r)) return 'sport';
-  if (/rando|nature|balade|for[eê]t|jardin/.test(r)) return 'nature';
-  if (/festival|f[eê]te|fete|carnaval/.test(r)) return 'fete';
-  if (/conf[eé]rence|d[eé]bat|atelier|formation/.test(r)) return 'conference';
-  return 'expo';
+  if(!raw) return 'patrimoine';
+  const r = raw.toLowerCase();
+
+  // Must match on WHOLE WORDS or clear phrases to avoid false positives
+  if(/concert|jazz|rock|chanson|orchestre|piano|chorale|chant|fado|blues|gospel|opéra|récital|fanfare|bal |musique live|soirée musicale/.test(r)) return 'musique';
+  if(/cinéma|ciné|film|projection|documentaire/.test(r)) return 'cinema';
+  if(/théâtre|spectacle|comédie|danse|ballet|cirque|stand.up|one.man.show|impro/.test(r)) return 'theatre';
+  if(/exposition|galerie|vernissage|peinture|sculpture|photo|exposition d|musée/.test(r)) return 'patrimoine';
+  if(/enfants?|junior|jeunesse|conte|marionnette|jeune public/.test(r)) return 'enfants';
+  if(/portes? ouvertes?|visite du domaine|visite de cave|visite guidée/.test(r)) return 'portes-ouvertes';
+  // Degustation: only match wine/food tasting — NOT "cave" alone (too common in addresses)
+  if(/dégustation|degustation|oenologie|vignoble|wine tasting|cave à vin|domaine viticole|vendanges/.test(r)) return 'degustation';
+  if(/brocante|vide.grenier|vide grenier|puces|braderie/.test(r)) return 'brocante';
+  if(/marché|marchés du/.test(r)) return 'marche';
+  // Sport: only clear sports activities, NOT job events with transport/logistics keywords
+  if(/yoga|marathon|trail|triathlon|cyclisme|natation|rugby|basket|tennis|football|volley|escalade|karaté|judo|tournoi sportif|compétition sportive/.test(r)) return 'sport';
+  if(/randonnée|balade|nature|forêt|jardin|botanique|faune|flore/.test(r)) return 'nature';
+  if(/festival|fête|fête de|foire de|carnaval|kermesse/.test(r)) return 'fete';
+  if(/atelier|workshop|initiation/.test(r)) return 'ateliers';
+  if(/visite|patrimoine|archéol|cathédrale|abbaye|château|prieuré|médiéval/.test(r)) return 'patrimoine';
+  if(/conférence|débat|causerie|colloque/.test(r)) return 'patrimoine';
+  return 'patrimoine';
 }
