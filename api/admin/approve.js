@@ -1,14 +1,14 @@
 // /api/admin/approve.js
 // POST { id } -> moves pending_events row into events table.
-// - Re-geocodes if lat/lng are missing (using api-adresse.data.gouv.fr)
+// - Re-geocodes if lat/lng missing (api-adresse.data.gouv.fr)
 // - Copies uploaded image to public bucket and writes image_url
-// - Inserts into events
-// - Marks pending_events row as approved, with approved_event_id pointer
+// - Builds PostGIS POINT geography for events.location
+// - Inserts into events with source_type='user_submission'
 
 import { createClient } from '@supabase/supabase-js';
 import { requireAuth, setAdminCors } from '../../lib/admin-auth.js';
 
-const PUBLIC_BUCKET = 'event-images';  // public bucket for approved event images
+const PUBLIC_BUCKET = 'event-images';
 const PRIVATE_BUCKET = 'submissions';
 
 export default async function handler(req, res) {
@@ -42,10 +42,15 @@ export default async function handler(req, res) {
     return res.status(409).json({ error: 'Already approved', event_id: pending.approved_event_id });
   }
 
-  // 2. Validation — title is the only hard requirement to publish
+  // 2. Validation — events table requires title, category, starts_at
   if (!pending.title) {
     return res.status(400).json({
       error: 'Cannot approve: title is required. Edit the submission first.'
+    });
+  }
+  if (!pending.starts_at) {
+    return res.status(400).json({
+      error: 'Cannot approve: start date is required. Edit the submission first.'
     });
   }
 
@@ -79,30 +84,46 @@ export default async function handler(req, res) {
     }
   }
 
-  // 5. Build the events row
+  // 5. Build the description — fold venue_name into it since events table has no venue column
+  let description = pending.description || '';
+  if (pending.venue_name) {
+    const venuePrefix = `Lieu : ${pending.venue_name}`;
+    description = description
+      ? `${venuePrefix}\n\n${description}`
+      : venuePrefix;
+  }
+
+  // 6. Build the events row matching the real schema
   const eventRow = {
     title: pending.title,
-    description: pending.description,
+    description: description || null,
+    category: pending.category || 'autre',
+    address: pending.address,
+    city: pending.city,
+    postcode: pending.postal_code,           // pending uses postal_code, events uses postcode
+    country: 'France',
     starts_at: pending.starts_at,
     ends_at: pending.ends_at,
-    category: pending.category || 'autre',
-    venue_name: pending.venue_name,
-    address: pending.address,
-    postal_code: pending.postal_code,
-    city: pending.city,
-    lat,
-    lng,
+    image_url: publicImageUrl,
     price_min: pending.price_min,
     price_max: pending.price_max,
     is_free: pending.is_free,
+    booking_url: pending.booking_url || pending.source_url,
+    source_type: 'scraper',
+    source_name: 'user_submission',
     source_url: pending.source_url,
-    booking_url: pending.booking_url,
-    image_url: publicImageUrl,
-    source: 'user_submission',
-    created_at: new Date().toISOString()
+    source_event_id: `submission-${pending.id}`,
+    status: 'published',
+    is_verified: true,
+    is_recurring: false
   };
 
-  // 6. Insert into events
+  // 7. PostGIS location — Supabase REST accepts WKT string for geography columns
+  if (lat && lng) {
+    eventRow.location = `POINT(${lng} ${lat})`;
+  }
+
+  // 8. Insert into events
   const { data: insertedEvent, error: insertErr } = await supabase
     .from('events')
     .insert(eventRow)
@@ -117,7 +138,7 @@ export default async function handler(req, res) {
     });
   }
 
-  // 7. Update pending row
+  // 9. Update pending row
   const { error: updateErr } = await supabase
     .from('pending_events')
     .update({
@@ -160,7 +181,6 @@ async function geocodeAddress(text) {
 // ── Copy from private to public bucket ─────────────────────────────────────
 async function copyToPublicBucket(supabase, sourcePath, contentType) {
   try {
-    // Download from private bucket
     const { data: fileData, error: dlErr } = await supabase
       .storage
       .from(PRIVATE_BUCKET)
@@ -170,7 +190,6 @@ async function copyToPublicBucket(supabase, sourcePath, contentType) {
       return null;
     }
 
-    // Use the same path in public bucket
     const buffer = Buffer.from(await fileData.arrayBuffer());
     const { data: upload, error: upErr } = await supabase
       .storage
@@ -184,7 +203,6 @@ async function copyToPublicBucket(supabase, sourcePath, contentType) {
       return null;
     }
 
-    // Get the public URL
     const { data: pub } = supabase
       .storage
       .from(PUBLIC_BUCKET)
