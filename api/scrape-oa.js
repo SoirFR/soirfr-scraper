@@ -171,7 +171,7 @@ function isJunk(title, description) {
 }
 
 function mapCat(raw) {
-  if (!raw) return 'autre'; const r = raw.toLowerCase();
+  if (!raw) return 'expo'; const r = raw.toLowerCase();
   if (/concert|musique|jazz|rock|chanson|chant/.test(r)) return 'musique';
   if (/cin[eé]|film|projection/.test(r)) return 'cinema';
   if (/th[eé][aâ]tre|spectacle|danse|ballet/.test(r)) return 'theatre';
@@ -185,5 +185,5 @@ function mapCat(raw) {
   if (/rando|nature|balade|for[eê]t|jardin/.test(r)) return 'nature';
   if (/festival|f[eê]te|fete|carnaval/.test(r)) return 'fete';
   if (/conf[eé]rence|d[eé]bat|atelier|formation/.test(r)) return 'conference';
-  return 'autre';
+  return 'expo';
 }
