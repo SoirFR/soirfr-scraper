@@ -1,11 +1,11 @@
 // /api/admin/login.js
-// POST { password } -> sets session cookie on success
+// POST { password } -> { ok: true, token: "..." } on success
 //
-// Uses timing-safe comparison to prevent timing attacks.
-// Rate limit: rely on Vercel's per-IP throttling for now.
+// Frontend stores token in localStorage and sends as Authorization: Bearer <token>
+// for every subsequent admin request.
 
 import { timingSafeEqual } from 'crypto';
-import { buildLoginCookie, setAdminCors } from '../../lib/admin-auth.js';
+import { signToken, setAdminCors } from '../../lib/admin-auth.js';
 
 export const config = {
   api: { bodyParser: { sizeLimit: '1kb' } }
@@ -31,21 +31,20 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Password required' });
   }
 
-  // Timing-safe equality check (constant time)
+  // Timing-safe equality check
   const a = Buffer.from(submitted);
   const b = Buffer.from(expected);
   let ok = false;
   if (a.length === b.length) {
     try { ok = timingSafeEqual(a, b); } catch { ok = false; }
   }
-  // Always do the same amount of work, even on length mismatch
   if (!ok) {
-    // Small delay to slow down brute-force from sophisticated attackers
+    // Slow down brute-force
     await new Promise(r => setTimeout(r, 250 + Math.random() * 250));
     return res.status(401).json({ error: 'Mot de passe incorrect' });
   }
 
-  // Set cookie + respond
-  res.setHeader('Set-Cookie', buildLoginCookie());
-  return res.status(200).json({ ok: true });
+  // Return token — frontend will stash it in localStorage
+  const token = signToken();
+  return res.status(200).json({ ok: true, token });
 }
