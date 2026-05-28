@@ -3,7 +3,7 @@
 // - Re-geocodes if lat/lng missing (api-adresse.data.gouv.fr)
 // - Copies uploaded image to public bucket and writes image_url
 // - Builds PostGIS POINT geography for events.location
-// - Inserts into events with source_type='user_submission'
+// - Inserts into events with source_type='scraper', source_name='user_submission'
 
 import { createClient } from '@supabase/supabase-js';
 import { requireAuth, setAdminCors } from '../../lib/admin-auth.js';
@@ -113,7 +113,7 @@ export default async function handler(req, res) {
     source_name: 'user_submission',
     source_url: pending.source_url,
     source_event_id: `submission-${pending.id}`,
-    status: 'published',
+    status: 'active',                        // was 'published' — nothing in events queries for 'published'
     is_verified: true,
     is_recurring: false
   };
