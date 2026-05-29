@@ -448,18 +448,16 @@ async function scrapeJsonLdPage(url, dept, region, sourceName, dateFrom) {
 }
 
 // ── OpenAgenda API ────────────────────────────────────────────────────────
-// Build a valid public OpenAgenda URL. Events live UNDER their agenda
-// (openagenda.com/<agenda-slug>/events/<event-slug>), never at the bare
-// /events/<slug>, which returns a 403 "not associated to any agenda".
-// Returns null rather than a known-broken link if the agenda can't be found.
+// Build a valid public OpenAgenda URL. Events live UNDER their agenda, so the
+// bare /events/<slug> form returns a 403 "not associated to any agenda".
+// OpenAgenda exposes the real URL as `canonicalUrl`; if that's ever missing,
+// rebuild it from the origin agenda. Returns null rather than a dead link.
 function oaEventUrl(ev) {
-  const agendaSlug =
-    ev.originAgenda?.slug ||
-    ev.origin?.slug ||
-    ev.agenda?.slug ||
-    null;
-  if (agendaSlug && ev.slug) {
-    return `https://openagenda.com/${agendaSlug}/events/${ev.slug}`;
+  if (ev.canonicalUrl) return ev.canonicalUrl;
+  const ag = ev.originAgenda || ev.origin || ev.agenda || null;
+  if (ag && ev.slug) {
+    const base = ag.oaUrl || ag.url || (ag.slug ? `https://openagenda.com/${ag.slug}` : null);
+    if (base) return `${base.replace(/\/+$/, '')}/events/${ev.slug}`;
   }
   return null; // no link is better than a dead link
 }
