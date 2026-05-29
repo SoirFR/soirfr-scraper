@@ -3,7 +3,7 @@
 // - Re-geocodes if lat/lng missing (api-adresse.data.gouv.fr)
 // - Copies uploaded image to public bucket and writes image_url
 // - Builds PostGIS POINT geography for events.location
-// - Inserts into events with source_type='scraper', source_name='user_submission'
+// - Inserts into events with source_type='user_submission'
 
 import { createClient } from '@supabase/supabase-js';
 import { requireAuth, setAdminCors } from '../../lib/admin-auth.js';
@@ -54,23 +54,30 @@ export default async function handler(req, res) {
     });
   }
 
-  // 3. Geocode if lat/lng missing
-  let lat = pending.lat ? parseFloat(pending.lat) : null;
-  let lng = pending.lng ? parseFloat(pending.lng) : null;
-  if (!lat || !lng) {
-    const addressParts = [
-      pending.address,
-      pending.postal_code,
-      pending.city
-    ].filter(Boolean).join(' ');
-    if (addressParts) {
-      try {
-        const geo = await geocodeAddress(addressParts);
-        if (geo) { lat = geo.lat; lng = geo.lng; }
-      } catch (e) {
-        console.warn('Geocoding failed:', e.message);
-      }
+  // 3. Geocode from the submitter's typed address.
+  // IMPORTANT: We re-geocode from the address fields even if lat/lng exist,
+  // because stored lat/lng may have been derived from a poster image (Vision)
+  // and reflect the WRONG location (e.g. a poster for a Versailles trip reads
+  // "Lyon" because that's where the host club is).
+  // The submitter's typed address fields are the source of truth.
+  let lat = null, lng = null;
+  const addressParts = [
+    pending.address,
+    pending.postal_code,
+    pending.city
+  ].filter(Boolean).join(' ');
+  if (addressParts) {
+    try {
+      const geo = await geocodeAddress(addressParts);
+      if (geo) { lat = geo.lat; lng = geo.lng; }
+    } catch (e) {
+      console.warn('Geocoding failed:', e.message);
     }
+  }
+  // Fall back to stored lat/lng only if we couldn't geocode the address
+  if ((!lat || !lng) && pending.lat && pending.lng) {
+    lat = parseFloat(pending.lat);
+    lng = parseFloat(pending.lng);
   }
 
   // 4. Move first image to public bucket (if any)
@@ -113,7 +120,7 @@ export default async function handler(req, res) {
     source_name: 'user_submission',
     source_url: pending.source_url,
     source_event_id: `submission-${pending.id}`,
-    status: 'active',                        // was 'published' — nothing in events queries for 'published'
+    status: 'published',
     is_verified: true,
     is_recurring: false
   };
