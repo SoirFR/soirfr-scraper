@@ -448,6 +448,22 @@ async function scrapeJsonLdPage(url, dept, region, sourceName, dateFrom) {
 }
 
 // ── OpenAgenda API ────────────────────────────────────────────────────────
+// Build a valid public OpenAgenda URL. Events live UNDER their agenda
+// (openagenda.com/<agenda-slug>/events/<event-slug>), never at the bare
+// /events/<slug>, which returns a 403 "not associated to any agenda".
+// Returns null rather than a known-broken link if the agenda can't be found.
+function oaEventUrl(ev) {
+  const agendaSlug =
+    ev.originAgenda?.slug ||
+    ev.origin?.slug ||
+    ev.agenda?.slug ||
+    null;
+  if (agendaSlug && ev.slug) {
+    return `https://openagenda.com/${agendaSlug}/events/${ev.slug}`;
+  }
+  return null; // no link is better than a dead link
+}
+
 async function scrapeOAApi(key, depts, dateFrom, dateTo) {
   const events = [];
   for (const dept of depts) {
@@ -473,7 +489,7 @@ async function scrapeOAApi(key, depts, dateFrom, dateTo) {
       image_url: ev.image ? ev.image.base+ev.image.filename : null,
       is_free: ev.conditions?.fr?.toLowerCase().includes('gratuit')||false,
       booking_url: ev.registration?.[0]?.value||null,
-      source_url: `https://openagenda.com/events/${ev.slug}`,
+      source_url: oaEventUrl(ev),
       source_event_id: String(ev.uid), source_name: 'openagenda_api',
     });
     if (ins) added++;
