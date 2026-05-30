@@ -3,7 +3,7 @@
 // Vide-greniers, JDS, Bourgogne Tourisme, OpenAgenda API, Paris Open Data, Ticketmaster
 
 const SB_URL = 'https://ebinsidruxvbzukobshf.supabase.co';
-const SB_KEY = 'sb_publishable_QSnlPXEopb6x8m8N3K396Q_YPazJ0IM';
+const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'sb_publishable_QSnlPXEopb6x8m8N3K396Q_YPazJ0IM';
 
 // Central-eastern France: Burgundy + adjacent rural departments
 // Burgundy core (21,71,89,58) + western/northern edges (03,18,45,10,52)
