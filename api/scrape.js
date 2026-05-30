@@ -471,7 +471,7 @@ async function scrapeJsonLdPage(url, dept, region, sourceName, dateFrom) {
 async function scrapeBourgogneTourisme(dateFrom) {
   const BASE = 'https://www.bourgogne-tourisme.com';
   const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-  const res = await fetch(`${BASE}/sejourner/agenda/`, { headers: { 'User-Agent': UA } });
+  const res = await fetch(`${BASE}/sejourner/agenda/`, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const html = await res.text();
 
@@ -490,10 +490,10 @@ async function scrapeBourgogneTourisme(dateFrom) {
 
   let found = 0, added = 0, pages = 0;
   for (const path of paths) {
-    if (pages >= 40) break;                  // cap fetches per run (time budget)
+    if (pages >= 12) break;                  // cap fetches per run (time budget)
     if (known.has(BASE + path)) continue;    // already have this event
     try {
-      const er = await fetch(BASE + path, { headers: { 'User-Agent': UA } });
+      const er = await fetch(BASE + path, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) });
       if (!er.ok) continue;
       pages++;
       const ehtml = await er.text();
@@ -761,30 +761,10 @@ async function insertEvent(ev) {
     if (existing?.length>0) return false;
   }
 
-  // Cross-source dedup: same title + same calendar day + within ~500m
-  // Catches the same brocante/event listed by multiple aggregators.
-  // Uses the events_near_point RPC since lat/lng aren't direct columns (location is PostGIS POINT).
+  // Cross-source duplicates are caught at the database level by the dedup_key
+  // unique index (added during the duplicate cleanup), so no per-event spatial
+  // lookup is needed here — that check was making every new insert ~3x slower.
   const lat=parseFloat(ev.lat), lng=parseFloat(ev.lng);
-  if (ev.title && ev.starts_at && !isNaN(lat) && !isNaN(lng) && lat!==0 && lng!==0) {
-    const titleNorm = ev.title.toLowerCase().replace(/[^a-zà-ÿ0-9 ]/gi, '').trim();
-    const day = ev.starts_at.split('T')[0];
-    try {
-      const near = await sbFetch('rpc/events_near_point', 'POST', {
-        lat, lng, radius_km: 0.5,
-        cat: null, date_from: day, date_to: day, max_results: 20
-      });
-      if (Array.isArray(near) && near.length > 0) {
-        for (const candidate of near) {
-          const cTitle = (candidate.title || '').toLowerCase().replace(/[^a-zà-ÿ0-9 ]/gi, '').trim();
-          if (!cTitle) continue;
-          // Match if titles are equal, or one is a substantial prefix of the other (30+ chars)
-          if (cTitle === titleNorm) return false;
-          const overlap = Math.min(cTitle.length, titleNorm.length);
-          if (overlap >= 30 && cTitle.slice(0, overlap) === titleNorm.slice(0, overlap)) return false;
-        }
-      }
-    } catch {}
-  }
 
   const loc=(!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0)?`POINT(${lng} ${lat})`:null;
   return await sbFetch('events','POST',{
