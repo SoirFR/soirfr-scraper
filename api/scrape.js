@@ -22,6 +22,8 @@ const DEPT_VG_SLUG = {
 // limit. Re-running the scraper (or the nightly cron) backfills the rest.
 const ADD_BUDGET = 500;
 let ADDS_USED = 0;
+// Per-source set of existing source_event_ids, loaded once per run (see insertEvent).
+let KNOWN_BY_SOURCE = {};
 
 module.exports = async function handler(req, res) {
   const CRON_SECRET = process.env.CRON_SECRET;
@@ -34,6 +36,7 @@ module.exports = async function handler(req, res) {
 
   const results = [], errors = [];
   ADDS_USED = 0;
+  KNOWN_BY_SOURCE = {};
   const dateFrom = new Date().toISOString().split('T')[0];
   const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
 
@@ -763,11 +766,15 @@ async function insertEvent(ev) {
   if (isJunk(ev.title, ev.description)) return false;
   if (ADDS_USED >= ADD_BUDGET) return false;   // per-run insert cap (time budget)
 
-  // Same-source dedup: skip if this exact source_event_id already exists for this source
+  // Same-source dedup: load this source's existing IDs once per run (one query),
+  // then check in memory. Avoids a database round-trip for every single event.
   if (ev.source_event_id&&ev.source_name) {
     const id = String(ev.source_event_id).slice(0,200);
-    const existing = await sbFetch(`events?source_name=eq.${encodeURIComponent(ev.source_name)}&source_event_id=eq.${encodeURIComponent(id)}&select=id`, 'GET');
-    if (existing?.length>0) return false;
+    if (!KNOWN_BY_SOURCE[ev.source_name]) {
+      const rows = await sbFetch(`events?source_name=eq.${encodeURIComponent(ev.source_name)}&select=source_event_id&limit=20000`, 'GET');
+      KNOWN_BY_SOURCE[ev.source_name] = new Set((rows||[]).map(r => String(r.source_event_id)));
+    }
+    if (KNOWN_BY_SOURCE[ev.source_name].has(id)) return false;
   }
 
   // Cross-source duplicates are caught at the database level by the dedup_key
@@ -789,7 +796,12 @@ async function insertEvent(ev) {
     source_event_id: ev.source_event_id?String(ev.source_event_id).slice(0,200):null,
     status: 'active', scraped_at: new Date().toISOString(),
   });
-  if (_inserted) ADDS_USED++;
+  if (_inserted) {
+    ADDS_USED++;
+    if (ev.source_name && ev.source_event_id) {
+      (KNOWN_BY_SOURCE[ev.source_name] ||= new Set()).add(String(ev.source_event_id).slice(0,200));
+    }
+  }
   return _inserted;
 }
 
