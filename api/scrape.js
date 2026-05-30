@@ -556,7 +556,7 @@ async function scrapeOAApi(key, depts, dateFrom, dateTo) {
     const ins = await insertEvent({
       title: ev.title?.fr||ev.title?.en||'Événement',
       description: ev.description?.fr?.slice(0,1000),
-      category: mapCat(ev.keywords?.fr?.[0]||''),
+      category: mapCat((ev.title?.fr||ev.title?.en||'')+' '+(ev.keywords?.fr?.join(' ')||'')),
       address: ev.location?.address, city: ev.location?.city,
       postcode: ev.location?.postalCode, department: ev._dept,
       region: 'Bourgogne-Franche-Comté',
@@ -933,7 +933,7 @@ function mapCat(raw) {
   const r = raw.toLowerCase();
 
   // Must match on WHOLE WORDS or clear phrases to avoid false positives
-  if(/\bconcert\b|\bjazz\b|\brock\b|\bchanson\b|\borchestre\b|\bpiano\b|\bchorale\b|\bchant\b|\bfado\b|\bblues\b|\bgospel\b|\bopéra\b|\brécital\b|\bfanfare\b|\bbal \b|musique live|soirée musicale/.test(r)) return 'musique';
+  if(/\bconcert\b|\bjazz\b|\brock\b|\bchanson\b|\borchestre\b|\bpiano\b|\bchorale\b|\bchoral\b|\bchœur\b|\bchoeur\b|\bchant\b|\bvocal\b|\bvocale\b|\bfado\b|\bblues\b|\bgospel\b|\bopéra\b|\brécital\b|\bfanfare\b|\bharmonie\b|\bphilharmon|\bsymphon|\blyrique\b|\bquatuor\b|\bmusique\b|\bmusical\b|\bmusicale\b|\bbal \b|musique live|soirée musicale/.test(r)) return 'musique';
   if(/\bcinéma\b|\bciné\b|\bfilm\b|\bprojection\b|\bdocumentaire\b/.test(r)) return 'cinema';
   if(/\bthéâtre\b|\bspectacle\b|\bcomédie\b|\bdanse\b|\bballet\b|\bcirque\b|stand.up|one.man.show|\bimpro\b/.test(r)) return 'theatre';
   if(/\bexposition\b|\bgalerie\b|\bvernissage\b|\bpeinture\b|\bsculpture\b|exposition d|\bmusée\b/.test(r)) return 'expo';
