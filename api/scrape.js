@@ -61,9 +61,11 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeJDS(dateFrom)); }
   catch (e) { errors.push({ source: 'jds', error: e.message }); }
 
-  // ── 8. Bourgogne Tourisme web ─────────────────────────────────────────
-  try { results.push(await scrapeBourgogneTourisme(dateFrom)); }
-  catch (e) { errors.push({ source: 'bourgogne_tourisme', error: e.message }); }
+  // ── 8. Bourgogne Tourisme web — TEMPORARILY DISABLED ──────────────────
+  // Their event pages respond slowly and were consuming the whole run before
+  // OpenAgenda (below) could insert. Re-enable once OpenAgenda is restored.
+  // try { results.push(await scrapeBourgogneTourisme(dateFrom)); }
+  // catch (e) { errors.push({ source: 'bourgogne_tourisme', error: e.message }); }
 
   // ── 9. OpenAgenda API — 14 rural/regional departments ─────────────────
   if (OA_KEY) {
