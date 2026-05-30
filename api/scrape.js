@@ -62,7 +62,7 @@ module.exports = async function handler(req, res) {
   catch (e) { errors.push({ source: 'jds', error: e.message }); }
 
   // ── 8. Bourgogne Tourisme web ─────────────────────────────────────────
-  try { results.push(await scrapeJsonLdPage('https://www.bourgogne-tourisme.com/sejourner/agenda/', null, 'Bourgogne-Franche-Comté', 'bourgogne_tourisme', dateFrom)); }
+  try { results.push(await scrapeBourgogneTourisme(dateFrom)); }
   catch (e) { errors.push({ source: 'bourgogne_tourisme', error: e.message }); }
 
   // ── 9. OpenAgenda API — 14 rural/regional departments ─────────────────
@@ -460,6 +460,49 @@ async function scrapeJsonLdPage(url, dept, region, sourceName, dateFrom) {
   const html = await res.text();
   const r = await extractJsonLd(html, dept, region, sourceName, url, dateFrom, null);
   return { source: sourceName, found: r.found, added: r.added };
+}
+
+// ── Bourgogne Tourisme ─────────────────────────────────────────────────────
+// The agenda listing links to each event's own page (/agenda/<slug>). We grab
+// those links, then read each event page — which carries full, correct
+// structured data INCLUDING its own URL. (The old approach read only the
+// listing page's sparse embedded data, so it returned a few events with no
+// real per-event link, defaulting to the generic agenda page.)
+async function scrapeBourgogneTourisme(dateFrom) {
+  const BASE = 'https://www.bourgogne-tourisme.com';
+  const res = await fetch(`${BASE}/sejourner/agenda/`, { headers: { 'User-Agent': 'SoirFR/1.0' } });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const html = await res.text();
+
+  // Each event card is a link to /agenda/<slug> (no further path segment).
+  const paths = [...new Set(
+    [...html.matchAll(/href="(\/agenda\/[a-z0-9][a-z0-9\-]*)"/gi)].map(m => m[1])
+  )];
+
+  // Skip event pages already stored so each run advances onto new ones.
+  let known = new Set();
+  try {
+    const existing = await sbFetch('events?source_name=eq.bourgogne_tourisme&select=source_url', 'GET');
+    known = new Set((existing || []).map(e => e.source_url));
+  } catch {}
+
+  let found = 0, added = 0, pages = 0;
+  for (const path of paths) {
+    if (pages >= 40) break;                  // cap fetches per run (time budget)
+    if (known.has(BASE + path)) continue;    // already have this event
+    try {
+      const er = await fetch(BASE + path, { headers: { 'User-Agent': 'SoirFR/1.0' } });
+      if (!er.ok) continue;
+      pages++;
+      const ehtml = await er.text();
+      // Reuse the proven JSON-LD reader; baseUrl is the event page itself, so
+      // source_url resolves to the real event page even if the markup omits it.
+      const r = await extractJsonLd(ehtml, '21', 'Bourgogne-Franche-Comté', 'bourgogne_tourisme', BASE + path, dateFrom, null);
+      found += r.found; added += r.added;
+    } catch {}
+    await sleep(250);
+  }
+  return { source: `Bourgogne Tourisme (${pages} pages read, ${paths.length} links found)`, found, added };
 }
 
 // ── OpenAgenda API ────────────────────────────────────────────────────────
