@@ -470,13 +470,15 @@ async function scrapeJsonLdPage(url, dept, region, sourceName, dateFrom) {
 // real per-event link, defaulting to the generic agenda page.)
 async function scrapeBourgogneTourisme(dateFrom) {
   const BASE = 'https://www.bourgogne-tourisme.com';
-  const res = await fetch(`${BASE}/sejourner/agenda/`, { headers: { 'User-Agent': 'SoirFR/1.0' } });
+  const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+  const res = await fetch(`${BASE}/sejourner/agenda/`, { headers: { 'User-Agent': UA } });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const html = await res.text();
 
-  // Each event card is a link to /agenda/<slug> (no further path segment).
+  // Links may be absolute (https://www.bourgogne-tourisme.com/agenda/<slug>) or
+  // relative (/agenda/<slug>) — capture the /agenda/<slug> path from either form.
   const paths = [...new Set(
-    [...html.matchAll(/href="(\/agenda\/[a-z0-9][a-z0-9\-]*)"/gi)].map(m => m[1])
+    [...html.matchAll(/href="(?:https?:\/\/[^"\/]*bourgogne-tourisme\.com)?(\/agenda\/[a-z0-9][a-z0-9-]*)"/gi)].map(m => m[1])
   )];
 
   // Skip event pages already stored so each run advances onto new ones.
@@ -491,7 +493,7 @@ async function scrapeBourgogneTourisme(dateFrom) {
     if (pages >= 40) break;                  // cap fetches per run (time budget)
     if (known.has(BASE + path)) continue;    // already have this event
     try {
-      const er = await fetch(BASE + path, { headers: { 'User-Agent': 'SoirFR/1.0' } });
+      const er = await fetch(BASE + path, { headers: { 'User-Agent': UA } });
       if (!er.ok) continue;
       pages++;
       const ehtml = await er.text();
