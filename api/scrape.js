@@ -18,6 +18,11 @@ const DEPT_VG_SLUG = {
   '70': '70-Haute-Saone', '71': '71-Saone-et-Loire', '89': '89-Yonne'
 };
 
+// Per-run cap on NEW inserts so the function always finishes within its time
+// limit. Re-running the scraper (or the nightly cron) backfills the rest.
+const ADD_BUDGET = 500;
+let ADDS_USED = 0;
+
 module.exports = async function handler(req, res) {
   const CRON_SECRET = process.env.CRON_SECRET;
   const OA_KEY = process.env.OPENAGENDA_API_KEY;
@@ -28,6 +33,7 @@ module.exports = async function handler(req, res) {
   }
 
   const results = [], errors = [];
+  ADDS_USED = 0;
   const dateFrom = new Date().toISOString().split('T')[0];
   const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
 
@@ -755,6 +761,7 @@ async function extractJsonLd(html, dept, region, sourceName, baseUrl, dateFrom, 
 async function insertEvent(ev) {
   if (!ev.title||!ev.starts_at) return false;
   if (isJunk(ev.title, ev.description)) return false;
+  if (ADDS_USED >= ADD_BUDGET) return false;   // per-run insert cap (time budget)
 
   // Same-source dedup: skip if this exact source_event_id already exists for this source
   if (ev.source_event_id&&ev.source_name) {
@@ -769,7 +776,7 @@ async function insertEvent(ev) {
   const lat=parseFloat(ev.lat), lng=parseFloat(ev.lng);
 
   const loc=(!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0)?`POINT(${lng} ${lat})`:null;
-  return await sbFetch('events','POST',{
+  const _inserted = await sbFetch('events','POST',{
     title: String(ev.title).slice(0,500), description: ev.description||null,
     category: ev.category||'autre', address: ev.address||null,
     city: ev.city||null, postcode: ev.postcode||null,
@@ -782,6 +789,8 @@ async function insertEvent(ev) {
     source_event_id: ev.source_event_id?String(ev.source_event_id).slice(0,200):null,
     status: 'active', scraped_at: new Date().toISOString(),
   });
+  if (_inserted) ADDS_USED++;
+  return _inserted;
 }
 
 async function sbFetch(path,method='GET',body=null) {
