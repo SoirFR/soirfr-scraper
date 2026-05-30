@@ -147,10 +147,25 @@ async function scrapeETerritoire(dateFrom) {
         const startDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
         if (startDate < dateFrom) continue;
         found++;
+        // The detail URL ends with ",town(postcode)" e.g. ",matour(71520)".
+        // Read the town + postcode straight off it so the geocoder can place
+        // the event. If the pattern isn't there, we just leave them null
+        // (same as before — no event is lost).
+        let city = null, postcode = null, department = '71';
+        const locM = detailPath.match(/,([^,\/]+?)\((\d{5})\)\s*$/);
+        if (locM) {
+          postcode = locM[2];
+          department = postcode.slice(0, 2);
+          city = locM[1].split('-')
+            .map(w => w ? w.charAt(0).toUpperCase() + w.slice(1) : w)
+            .join('-');
+        }
         const ins = await insertEvent({
           title,
           category: mapCat(slug.split('/')[0] + ' ' + title),
-          department: '71',
+          city,
+          postcode,
+          department,
           region: 'Bourgogne-Franche-Comté',
           starts_at: startDate,
           source_url: 'https://www.eterritoire.fr' + detailPath,
@@ -474,7 +489,14 @@ async function scrapeOAApi(key, depts, dateFrom, dateTo) {
   }
   let added = 0;
   for (const ev of events) {
-    const t = ev.timings?.[0]; if (!t) continue;
+    // OpenAgenda lists every session of a recurring event, oldest first, so
+    // ev.timings[0] is often years in the past. Pick the soonest session that
+    // hasn't finished yet (upcoming or ongoing); skip events with no live one.
+    const now = Date.now();
+    const t = (Array.isArray(ev.timings) ? ev.timings : [])
+      .filter(x => x && x.begin && x.end && new Date(x.end).getTime() >= now)
+      .sort((a, b) => new Date(a.begin) - new Date(b.begin))[0];
+    if (!t) continue;
     const ins = await insertEvent({
       title: ev.title?.fr||ev.title?.en||'Événement',
       description: ev.description?.fr?.slice(0,1000),
