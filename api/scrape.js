@@ -625,6 +625,32 @@ async function scrapeTicketmaster(key, dateFrom, dateTo) {
 // ── Seat À La Table (Shopify storefront) ──────────────────────────────────
 // Premium curated French food/wine "Epicurean Adventures" + supper clubs.
 // Uses Shopify's built-in /products.json endpoint for structured data.
+// Map a Seat À La Table region/venue mention to a representative town + coords.
+// Their events always name the region in the title or description, so we scan
+// that text. Most specific (town/château) matches win over broad region names.
+function seatLocation(text) {
+  const t = (text || '').toLowerCase();
+  const PLACES = [
+    [/\bpommard\b/,                              { city: 'Pommard',         region: 'Bourgogne-Franche-Comté', lat: 46.9742, lng: 4.7950 }],
+    [/\bbeaune\b|côte de beaune|armand heitz/,   { city: 'Beaune',          region: 'Bourgogne-Franche-Comté', lat: 47.0257, lng: 4.8397 }],
+    [/\bbourgogne\b|\bburgundy\b/,               { city: 'Beaune',          region: 'Bourgogne-Franche-Comté', lat: 47.0257, lng: 4.8397 }],
+    [/martillac|smith haut.?lafitte/,            { city: 'Martillac',       region: 'Nouvelle-Aquitaine',      lat: 44.7197, lng: -0.5556 }],
+    [/\bbordeaux\b|\bmédoc\b|saint.?émilion/,    { city: 'Bordeaux',        region: 'Nouvelle-Aquitaine',      lat: 44.8378, lng: -0.5792 }],
+    [/\bépernay\b|\bepernay\b/,                  { city: 'Épernay',         region: 'Grand Est',               lat: 49.0440, lng: 3.9597 }],
+    [/\breims\b|\bchampagne\b|edouard duval/,    { city: 'Reims',           region: 'Grand Est',               lat: 49.2583, lng: 4.0317 }],
+    [/montdomaine|\bvouvray\b|\bchinon\b|\bloire\b/,{ city: 'Tours',        region: 'Centre-Val de Loire',     lat: 47.3941, lng: 0.6848 }],
+    [/\bversailles\b/,                           { city: 'Versailles',      region: 'Île-de-France',           lat: 48.8014, lng: 2.1301 }],
+    [/\bprovence\b|luberon|\baix\b/,             { city: 'Aix-en-Provence', region: "Provence-Alpes-Côte d'Azur", lat: 43.5297, lng: 5.4474 }],
+    [/\brouen\b|normandie|normandy|couronne/,    { city: 'Rouen',           region: 'Normandie',               lat: 49.4432, lng: 1.0993 }],
+    [/alsace|elsass|strasbourg/,                 { city: 'Strasbourg',      region: 'Grand Est',               lat: 48.5734, lng: 7.7521 }],
+    [/lapérouse|laperouse|\bparis\b/,            { city: 'Paris',           region: 'Île-de-France',           lat: 48.8566, lng: 2.3522 }],
+    [/zermatt|st.?\s*moritz|switzerland|suisse/, { city: 'Zermatt',         region: 'Valais',                  lat: 46.0207, lng: 7.7491 }],
+  ];
+  for (const [re, loc] of PLACES) if (re.test(t)) return loc;
+  return null;
+}
+
+
 async function scrapeSeatALaTable(dateFrom) {
   let found = 0, added = 0;
   const BASE = 'https://seatalatable.com';
@@ -694,6 +720,10 @@ async function scrapeSeatALaTable(dateFrom) {
           category = 'degustation';
         }
 
+        // Location: these events always name their region/town in the title or
+        // description. Read it out and map to coordinates so they can be placed.
+        const loc = seatLocation(searchText);
+
         // Price from first variant
         const variant = p.variants?.[0];
         const priceMin = variant?.price ? parseFloat(variant.price) : null;
@@ -702,6 +732,9 @@ async function scrapeSeatALaTable(dateFrom) {
           title: p.title,
           description: bodyText.slice(0, 1000).trim() || null,
           category,
+          city: loc?.city || null,
+          region: loc?.region || null,
+          lat: loc?.lat, lng: loc?.lng,
           country: 'FR',
           starts_at: startsAt,
           image_url: p.images?.[0]?.src || null,
@@ -940,7 +973,8 @@ function mapCat(raw) {
   if(/\benfants?\b|\bjunior\b|\bjeunesse\b|\bconte\b|\bmarionnette\b|jeune public/.test(r)) return 'enfants';
   if(/portes? ouvertes?|visite du domaine|visite de cave|visite guidée/.test(r)) return 'portes-ouvertes';
   // Degustation: only match wine/food tasting — NOT "cave" alone (too common in addresses)
-  if(/\bdégustation\b|degustation|\boenologie\b|\bvignoble\b|wine tasting|cave à vin|domaine viticole|vendanges/.test(r)) return 'degustation';
+  if(/\bdégustation\b|degustation|\boenolog|\bvignoble\b|wine tasting|cave à vin|bar à vin|accord mets|domaine viticole|vendanges|millésime/.test(r)) return 'degustation';
+  if(/gastronom|culinaire|\bgourmand\b|\bgourmet\b|\bbanquet\b|\bbrunch\b|food truck|table d.hôte|marché gourmand|repas gastronomique|dîner gastronomique|art culinaire|fête de la gastronomie/.test(r)) return 'gastronomie';
   if(/\bbrocante\b|vide.grenier|vide grenier|\bpuces\b|\bbraderie\b/.test(r)) return 'brocante';
   if(/\bmarché\b|marchés du/.test(r)) return 'marche';
   // Sport: only clear sports activities, NOT job events with transport/logistics keywords
