@@ -121,12 +121,45 @@ module.exports = async function handler(req, res) {
 async function scrapeETerritoire(dateFrom) {
   let added = 0, found = 0;
   const BASE = 'https://www.eterritoire.fr';
+  // All 8 departments in Bourgogne-Franche-Comté, with deeper pagination.
+  // The same regex matches whether the URL targets a region or a department.
   const PAGES = [
+    // Region-wide (catches anything not pinned to a department)
+    `${BASE}/evenements/france,bourgogne-franche-comte/`,
+    `${BASE}/evenements/france,bourgogne-franche-comte/2`,
+    `${BASE}/evenements/france,bourgogne-franche-comte/3`,
+    `${BASE}/evenements/france,bourgogne-franche-comte/4`,
+    `${BASE}/evenements/france,bourgogne-franche-comte/5`,
+    // Saône-et-Loire (71) — primary focus
     `${BASE}/evenements/france,bourgogne-franche-comte,saone-et-loire/`,
     `${BASE}/evenements/france,bourgogne-franche-comte,saone-et-loire//2`,
     `${BASE}/evenements/france,bourgogne-franche-comte,saone-et-loire//3`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,saone-et-loire//4`,
+    // Côte-d'Or (21) — Beaune, Dijon
     `${BASE}/evenements/france,bourgogne-franche-comte,cote-d-or/`,
     `${BASE}/evenements/france,bourgogne-franche-comte,cote-d-or//2`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,cote-d-or//3`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,cote-d-or//4`,
+    // Yonne (89)
+    `${BASE}/evenements/france,bourgogne-franche-comte,yonne/`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,yonne/2`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,yonne/3`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,yonne/4`,
+    // Nièvre (58)
+    `${BASE}/evenements/france,bourgogne-franche-comte,nievre/`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,nievre/2`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,nievre/3`,
+    // Doubs (25)
+    `${BASE}/evenements/france,bourgogne-franche-comte,doubs/`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,doubs/2`,
+    // Jura (39)
+    `${BASE}/evenements/france,bourgogne-franche-comte,jura/`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,jura/2`,
+    // Haute-Saône (70)
+    `${BASE}/evenements/france,bourgogne-franche-comte,haute-saone/`,
+    `${BASE}/evenements/france,bourgogne-franche-comte,haute-saone/2`,
+    // Territoire de Belfort (90)
+    `${BASE}/evenements/france,bourgogne-franche-comte,territoire-de-belfort/`,
   ];
 
   for (const pageUrl of PAGES) {
