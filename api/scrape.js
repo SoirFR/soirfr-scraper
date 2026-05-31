@@ -147,21 +147,30 @@ async function scrapeETerritoire(dateFrom) {
       found += r.found; added += r.added;
 
       // Also extract event blocks directly from listing HTML
-      // eTerritoire listing shows: title, date, city, category, image in each card
-      const cards = [...html.matchAll(/href="(\/detail\/([^"]+))"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>[\s\S]*?Le (\d{2}\/\d{2}\/\d{4})/g)];
-      for (const card of cards) {
-        const detailPath = card[1];
-        const slug = card[2];
-        const title = card[3].trim();
-        const rawDate = card[4]; // DD/MM/YYYY
-        const parts = rawDate.split('/');
-        const startDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+      // eTerritoire listing shows: title, date, city, category, image in each card.
+      // Match each <a href="/detail/..."> block, then pull title/date/image from inside.
+      const cardBlocks = [...html.matchAll(/<a\s+href="(\/detail\/([^"]+))"[\s\S]*?(?=<a\s+href="\/detail\/|<\/main|<\/section|$)/g)];
+      for (const block of cardBlocks) {
+        const fullBlock = block[0];
+        const detailPath = block[1];
+        const slug = block[2];
+        const titleM = fullBlock.match(/<h2[^>]*>([^<]+)<\/h2>/);
+        const dateM = fullBlock.match(/Le (\d{2})\/(\d{2})\/(\d{4})/);
+        if (!titleM || !dateM) continue;
+        const title = titleM[1].trim();
+        const startDate = `${dateM[3]}-${dateM[2]}-${dateM[1]}`;
         if (startDate < dateFrom) continue;
+
+        // Image — grab the first <img> in the card. Make absolute if relative.
+        let imageUrl = null;
+        const imgM = fullBlock.match(/<img[^>]+src="([^"]+)"/);
+        if (imgM) {
+          imageUrl = imgM[1];
+          if (imageUrl.startsWith('/')) imageUrl = BASE + imageUrl;
+        }
+
         found++;
         // The detail URL ends with ",town(postcode)" e.g. ",matour(71520)".
-        // Read the town + postcode straight off it so the geocoder can place
-        // the event. If the pattern isn't there, we just leave them null
-        // (same as before — no event is lost).
         let city = null, postcode = null, department = '71';
         const locM = detailPath.match(/,([^,\/]+?)\((\d{5})\)\s*$/);
         if (locM) {
@@ -179,6 +188,7 @@ async function scrapeETerritoire(dateFrom) {
           department,
           region: 'Bourgogne-Franche-Comté',
           starts_at: startDate,
+          image_url: imageUrl,
           source_url: 'https://www.eterritoire.fr' + detailPath,
           source_event_id: (title + startDate).replace(/[^a-z0-9]/gi,'_').slice(0,200),
           source_name: 'eterritoire',
@@ -260,6 +270,26 @@ async function scrapeAgendaCulturel71(dateFrom) {
         if (!title || !link) continue;
         found++;
 
+        // Image extraction — try multiple patterns common in French event RSS:
+        // 1. <enclosure url="..." type="image/...">
+        // 2. <media:content url="..." medium="image">  or  <media:thumbnail url="...">
+        // 3. <img src="..."> inside the description HTML (CDATA-wrapped)
+        let imageUrl = null;
+        const enclosureM = content.match(/<enclosure[^>]+url="([^"]+)"[^>]*type="image\//i);
+        if (enclosureM) imageUrl = enclosureM[1];
+        if (!imageUrl) {
+          const mediaM = content.match(/<media:(?:content|thumbnail)[^>]+url="([^"]+)"/i);
+          if (mediaM) imageUrl = mediaM[1];
+        }
+        if (!imageUrl && desc) {
+          const imgM = desc.match(/<img[^>]+src="([^"]+)"/i);
+          if (imgM) imageUrl = imgM[1];
+        }
+        // Make relative URLs absolute
+        if (imageUrl && imageUrl.startsWith('/')) {
+          imageUrl = 'https://71.agendaculturel.fr' + imageUrl;
+        }
+
         // Parse date from pubDate (RFC 2822 format)
         let startDate = null;
         if (pubDate) {
@@ -279,6 +309,7 @@ async function scrapeAgendaCulturel71(dateFrom) {
           department: '71',
           region: 'Bourgogne-Franche-Comté',
           starts_at: startDate,
+          image_url: imageUrl,
           booking_url: link,
           source_url: link,
           source_event_id: link,
