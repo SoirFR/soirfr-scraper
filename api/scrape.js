@@ -146,30 +146,49 @@ async function scrapeETerritoire(dateFrom) {
       const r = await extractJsonLd(html, '71', 'Bourgogne-Franche-Comté', 'eterritoire', pageUrl, dateFrom, null);
       found += r.found; added += r.added;
 
-      // Also extract event blocks directly from listing HTML
-      // eTerritoire listing shows: title, date, city, category, image in each card.
-      // Match each <a href="/detail/..."> block, then pull title/date/image from inside.
-      const cardBlocks = [...html.matchAll(/<a\s+href="(\/detail\/([^"]+))"[\s\S]*?(?=<a\s+href="\/detail\/|<\/main|<\/section|$)/g)];
-      for (const block of cardBlocks) {
-        const fullBlock = block[0];
-        const detailPath = block[1];
-        const slug = block[2];
-        const titleM = fullBlock.match(/<h2[^>]*>([^<]+)<\/h2>/);
-        const dateM = fullBlock.match(/Le (\d{2})\/(\d{2})\/(\d{4})/);
-        if (!titleM || !dateM) continue;
-        const title = titleM[1].trim();
-        const startDate = `${dateM[3]}-${dateM[2]}-${dateM[1]}`;
-        if (startDate < dateFrom) continue;
-
-        // Image — grab the first <img> in the card. Make absolute if relative.
-        let imageUrl = null;
-        const imgM = fullBlock.match(/<img[^>]+src="([^"]+)"/);
-        if (imgM) {
-          imageUrl = imgM[1];
-          if (imageUrl.startsWith('/')) imageUrl = BASE + imageUrl;
+      // Build an image lookup: scan all <a href="/detail/..."> positions and
+      // record the nearest preceding <img src="..."> for each. This lets us
+      // attach images to cards without changing the card-matching logic.
+      const imagesByDetail = new Map();
+      const linkPositions = [...html.matchAll(/<a[^>]+href="(\/detail\/[^"]+)"/g)];
+      const imgMatches = [...html.matchAll(/<img[^>]+src="([^"]+)"/g)];
+      for (const lp of linkPositions) {
+        const detailPath = lp[1];
+        const linkIdx = lp.index;
+        // Find the nearest <img> that appears BEFORE this link
+        let nearestImg = null, nearestIdx = -1;
+        for (const im of imgMatches) {
+          if (im.index < linkIdx && im.index > nearestIdx) {
+            nearestIdx = im.index;
+            nearestImg = im[1];
+          }
         }
+        if (nearestImg) {
+          // Sanity: must be reasonably close (not from a totally different section).
+          // Eterritoire cards typically have img within ~2000 chars before the href.
+          if (linkIdx - nearestIdx < 2000) {
+            // Make absolute if relative
+            let url = nearestImg;
+            if (url.startsWith('/')) url = BASE + url;
+            imagesByDetail.set(detailPath, url);
+          }
+        }
+      }
 
+      // Also extract event blocks directly from listing HTML
+      // eTerritoire listing shows: title, date, city, category in each card
+      const cards = [...html.matchAll(/href="(\/detail\/([^"]+))"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>[\s\S]*?Le (\d{2}\/\d{2}\/\d{4})/g)];
+      for (const card of cards) {
+        const detailPath = card[1];
+        const slug = card[2];
+        const title = card[3].trim();
+        const rawDate = card[4]; // DD/MM/YYYY
+        const parts = rawDate.split('/');
+        const startDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
+        if (startDate < dateFrom) continue;
         found++;
+        // Look up image (may be undefined, that's OK — falls back to null)
+        const imageUrl = imagesByDetail.get(detailPath) || null;
         // The detail URL ends with ",town(postcode)" e.g. ",matour(71520)".
         let city = null, postcode = null, department = '71';
         const locM = detailPath.match(/,([^,\/]+?)\((\d{5})\)\s*$/);
