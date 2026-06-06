@@ -9,13 +9,27 @@ const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'sb_publishable_QSnlPXEo
 // Burgundy core (21,71,89,58) + western/northern edges (03,18,45,10,52)
 // + Jura/Franche-Comté (39,25,70) + south toward Lyon (01,69)
 const DEPTS_REGION = ['21','71','89','58','03','18','45','10','52','39','25','70','01','69'];
+// Île-de-France: Paris (75) + petite couronne (92, 93, 94) + grande couronne (77, 78, 91, 95)
+const DEPTS_IDF = ['75','77','78','91','92','93','94','95'];
+// Depts to scrape for brocantes/vide-greniers (BFC + IdF)
+const DEPTS_BROCANTE = [...DEPTS_REGION, ...DEPTS_IDF];
+
+// Map a dept code to its region name (used to tag events correctly)
+function regionForDept(dept) {
+  if (DEPTS_IDF.includes(dept)) return 'Île-de-France';
+  return 'Bourgogne-Franche-Comté';
+}
 
 // Mapping from dept code to slugified name used in vide-greniers.org URLs
 const DEPT_VG_SLUG = {
   '01': '01-Ain', '03': '03-Allier', '10': '10-Aube', '18': '18-Cher',
   '21': '21-Cote-dOr', '25': '25-Doubs', '39': '39-Jura', '45': '45-Loiret',
   '52': '52-Haute-Marne', '58': '58-Nievre', '69': '69-Rhone',
-  '70': '70-Haute-Saone', '71': '71-Saone-et-Loire', '89': '89-Yonne'
+  '70': '70-Haute-Saone', '71': '71-Saone-et-Loire', '89': '89-Yonne',
+  // Île-de-France
+  '75': '75-Paris', '77': '77-Seine-et-Marne', '78': '78-Yvelines',
+  '91': '91-Essonne', '92': '92-Hauts-de-Seine', '93': '93-Seine-Saint-Denis',
+  '94': '94-Val-de-Marne', '95': '95-Val-dOise'
 };
 
 // Per-run cap on NEW inserts so the function always finishes within its time
@@ -59,7 +73,7 @@ module.exports = async function handler(req, res) {
   catch (e) { errors.push({ source: 'calendrier_brocantes', error: e.message }); }
 
   // ── 5. Brocabrac — 14 rural/regional departments ───────────────────────
-  try { results.push(await scrapeBrocabrac(DEPTS_REGION, dateFrom)); }
+  try { results.push(await scrapeBrocabrac(DEPTS_BROCANTE, dateFrom)); }
   catch (e) { errors.push({ source: 'brocabrac', error: e.message }); }
 
   // ── 6. Vide-Greniers.org dept 71 ──────────────────────────────────────
@@ -496,7 +510,7 @@ async function scrapeBrocabrac(depts, dateFrom) {
       const res = await fetch(`https://brocabrac.fr/${dept}/`, { headers: { 'User-Agent': 'SoirFR/1.0' } });
       if (!res.ok) continue;
       const html = await res.text();
-      const r = await extractJsonLd(html, dept, 'Bourgogne-Franche-Comté', 'brocabrac', `https://brocabrac.fr/${dept}/`, dateFrom, 'brocante');
+      const r = await extractJsonLd(html, dept, regionForDept(dept), 'brocabrac', `https://brocabrac.fr/${dept}/`, dateFrom, 'brocante');
       found += r.found; added += r.added;
     } catch {}
     await sleep(600);
@@ -507,7 +521,7 @@ async function scrapeBrocabrac(depts, dateFrom) {
 // ── Vide-Greniers.org ─────────────────────────────────────────────────────
 async function scrapeVideGreniers(dateFrom) {
   let added = 0, found = 0;
-  for (const dept of DEPTS_REGION) {
+  for (const dept of DEPTS_BROCANTE) {
     const slug = DEPT_VG_SLUG[dept];
     if (!slug) continue;
     const url = `https://www.vide-greniers.org/${slug}.htm`;
