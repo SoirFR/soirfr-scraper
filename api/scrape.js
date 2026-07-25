@@ -54,6 +54,15 @@ module.exports = async function handler(req, res) {
   const dateFrom = new Date().toISOString().split('T')[0];
   const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
 
+  // ── 0. Maintenance: expire finished events ─────────────────────────────
+  // An event is over when its end date has passed, or — if it has no end
+  // date — when its start date has passed. Keeps the active table honest;
+  // without this, past events pile up forever (10k+ found in July 2026).
+  try {
+    const expired = await expireOldEvents(dateFrom);
+    results.push({ source: 'expire_maintenance', found: expired, added: 0 });
+  } catch (e) { errors.push({ source: 'expire_maintenance', error: e.message }); }
+
   // ── 1. eTerritoire Bourgogne-Franche-Comté ──────────────────────────────
   // Confirmed: 4,528 events for dept 71 alone, paginated at /2 /3 etc.
   try { results.push(await scrapeETerritoire(dateFrom)); }
@@ -224,15 +233,19 @@ async function scrapeETerritoire(dateFrom) {
 
       // Also extract event blocks directly from listing HTML
       // eTerritoire listing shows: title, date, city, category in each card
-      const cards = [...html.matchAll(/href="(\/detail\/([^"]+))"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>[\s\S]*?Le (\d{2}\/\d{2}\/\d{4})/g)];
+      // Cards show either "Le DD/MM/YYYY" (one day) or "Du DD/MM/YYYY au DD/MM/YYYY"
+      // (exhibitions, festivals). The old regex only matched "Le …", so every
+      // date-range event — including running exhibitions — was silently dropped.
+      const cards = [...html.matchAll(/href="(\/detail\/([^"]+))"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>[\s\S]*?(?:Le (\d{2}\/\d{2}\/\d{4})|Du (\d{2}\/\d{2}\/\d{4})\s+au (\d{2}\/\d{2}\/\d{4}))/g)];
+      const frDate = s => { const p = s.split('/'); return `${p[2]}-${p[1]}-${p[0]}`; };
       for (const card of cards) {
         const detailPath = card[1];
         const slug = card[2];
         const title = card[3].trim();
-        const rawDate = card[4]; // DD/MM/YYYY
-        const parts = rawDate.split('/');
-        const startDate = `${parts[2]}-${parts[1]}-${parts[0]}`;
-        if (startDate < dateFrom) continue;
+        const startDate = frDate(card[4] || card[5]);
+        const endDate = card[6] ? frDate(card[6]) : null;
+        // Skip only if the event is fully over
+        if ((endDate || startDate) < dateFrom) continue;
         found++;
         // Look up image (may be undefined, that's OK — falls back to null)
         const imageUrl = imagesByDetail.get(detailPath) || null;
@@ -254,6 +267,7 @@ async function scrapeETerritoire(dateFrom) {
           department,
           region: 'Bourgogne-Franche-Comté',
           starts_at: startDate,
+          ends_at: endDate,
           image_url: imageUrl,
           source_url: 'https://www.eterritoire.fr' + detailPath,
           source_event_id: (title + startDate).replace(/[^a-z0-9]/gi,'_').slice(0,200),
@@ -356,12 +370,11 @@ async function scrapeAgendaCulturel71(dateFrom) {
           imageUrl = 'https://71.agendaculturel.fr' + imageUrl;
         }
 
-        // Parse date from pubDate (RFC 2822 format)
-        let startDate = null;
-        if (pubDate) {
-          const d = new Date(pubDate);
-          if (!isNaN(d)) startDate = d.toISOString().split('T')[0];
-        }
+        // The RSS <pubDate> is the PUBLICATION date, not the event date — using
+        // it stamped ~100 events with wrong dates (all in the past within weeks).
+        // Parse the real event date out of the title/description text instead;
+        // no parseable date → skip rather than store garbage.
+        const startDate = parseFrenchEventDate(`${title} ${desc || ''}`, dateFrom);
         if (!startDate || startDate < dateFrom) continue;
 
         // Try to get city from description or link
@@ -387,6 +400,30 @@ async function scrapeAgendaCulturel71(dateFrom) {
     } catch {}
   }
   return { source: 'Agenda Culturel 71', found, added };
+}
+
+// Parse a French event date out of free text: "12 septembre 2026",
+// "samedi 12 septembre" (year inferred), "12/09/2026". Returns YYYY-MM-DD or null.
+function parseFrenchEventDate(text, dateFrom) {
+  if (!text) return null;
+  const t = text.toLowerCase().replace(/1er\b/g, '1');
+  const MONTHS = { janvier:1, 'février':2, fevrier:2, mars:3, avril:4, mai:5, juin:6,
+    juillet:7, 'août':8, aout:8, septembre:9, octobre:10, novembre:11, 'décembre':12, decembre:12 };
+  // "12 septembre 2026" or "12 septembre" (year optional)
+  const m = t.match(new RegExp(`\\b(\\d{1,2})\\s+(${Object.keys(MONTHS).join('|')})(?:\\s+(\\d{4}))?`, 'i'));
+  if (m) {
+    const day = String(parseInt(m[1])).padStart(2, '0');
+    const mon = String(MONTHS[m[2]]).padStart(2, '0');
+    let year = m[3] ? parseInt(m[3]) : parseInt(dateFrom.slice(0, 4));
+    let iso = `${year}-${mon}-${day}`;
+    // No explicit year and the date already passed → it means next year
+    if (!m[3] && iso < dateFrom) iso = `${year + 1}-${mon}-${day}`;
+    return iso;
+  }
+  // "12/09/2026"
+  const n = t.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{4})\b/);
+  if (n) return `${n[3]}-${String(parseInt(n[2])).padStart(2,'0')}-${String(parseInt(n[1])).padStart(2,'0')}`;
+  return null;
 }
 
 function getXmlText(xml, tag) {
@@ -695,11 +732,33 @@ async function scrapeParisOpenData(dateFrom) {
 
 // ── Ticketmaster ──────────────────────────────────────────────────────────
 async function scrapeTicketmaster(key, dateFrom, dateTo) {
-  const params = new URLSearchParams({ apikey: key, countryCode: 'FR', startDateTime: new Date(dateFrom).toISOString().replace('.000',''), endDateTime: new Date(dateTo).toISOString().replace('.000',''), size: 200, sort: 'date,asc' });
-  const res = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
-  if (!res.ok) return { source: 'Ticketmaster', found: 0, added: 0 };
-  const data = await res.json();
-  const events = data?._embedded?.events||[];
+  // Geo-targeted queries instead of one nationwide list: countryCode=FR sorted
+  // by date returned mostly out-of-coverage events (8 total inserts ever).
+  // One circle over Burgundy/Franche-Comté, one over Île-de-France.
+  const ZONES = [
+    { latlong: '47.32,4.89', radius: '160' },   // Dijon-centred, covers BFC
+    { latlong: '48.85,2.35', radius: '60'  },   // Paris + couronnes
+  ];
+  const events = [];
+  const seenIds = new Set();
+  for (const z of ZONES) {
+    const params = new URLSearchParams({ apikey: key, countryCode: 'FR',
+      latlong: z.latlong, radius: z.radius, unit: 'km',
+      startDateTime: new Date(dateFrom).toISOString().replace('.000',''),
+      endDateTime: new Date(dateTo).toISOString().replace('.000',''),
+      size: 200, sort: 'date,asc' });
+    try {
+      const res = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`);
+      if (!res.ok) continue;
+      const data = await res.json();
+      for (const ev of (data?._embedded?.events || [])) {
+        if (seenIds.has(ev.id)) continue;
+        seenIds.add(ev.id);
+        events.push(ev);
+      }
+    } catch {}
+    await sleep(300);
+  }
   let added = 0;
   for (const ev of events) {
     const v=ev._embedded?.venues?.[0], p=ev.priceRanges?.[0], d=ev.dates?.start;
@@ -864,7 +923,10 @@ async function extractJsonLd(html, dept, region, sourceName, baseUrl, dateFrom, 
         const type = String([].concat(item['@type']).join(' '));
         if (!type.includes('Event')) continue;
         found++;
-        if (item.startDate && item.startDate < dateFrom) continue;
+        // Skip only events that are fully OVER. An exhibition that started last
+        // month but runs until September is live — judge by endDate when present.
+        const liveRef = String(item.endDate || item.startDate || '').slice(0, 10);
+        if (liveRef && liveRef < dateFrom) continue;
         const ins = await insertEvent({
           title: item.name,
           description: item.description?.slice(0,1000),
@@ -955,6 +1017,26 @@ async function sbFetch(path,method='GET',body=null) {
 }
 
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+
+// ── Expire events whose dates have passed ─────────────────────────────────
+// PATCH active rows to status='expired' when (ends_at < today) or
+// (no ends_at and starts_at < today). Returns how many rows were expired.
+async function expireOldEvents(today) {
+  const filter = `status=eq.active&or=(and(ends_at.is.null,starts_at.lt.${today}),and(ends_at.not.is.null,ends_at.lt.${today}))`;
+  const res = await fetch(`${SB_URL}/rest/v1/events?${filter}`, {
+    method: 'PATCH',
+    headers: {
+      'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': 'return=minimal, count=exact'
+    },
+    body: JSON.stringify({ status: 'expired' })
+  });
+  if (!res.ok) throw new Error(`expire HTTP ${res.status}`);
+  const range = res.headers.get('content-range') || '';
+  const m = range.match(/\/(\d+)/);
+  return m ? parseInt(m[1]) : 0;
+}
 
 // ── Geocode events missing coordinates ───────────────────────────────────
 async function geocodeMissingEvents() {
@@ -1047,39 +1129,4 @@ function isJunk(title, description) {
     'bilan de santé', 'permanence sociale',
     'permanence juridique', 'permanence administrative',
     // Social/retirement agency events
-    'carsat', 'cnav', 'caf de ', 'caf du ',
-    'mutualité française', 'cpam', 'urssaf',
-    // Formation/training events — broad match
-    ' formation ', 'de formation', 'en formation',
-    'stage de ', 'atelier de formation',
-    'session de formation', 'formation professionnelle',
-  ];
-
-  return junkPhrases.some(kw => t.includes(kw));
-}
-
-function mapCat(raw) {
-  if(!raw) return 'patrimoine';
-  const r = raw.toLowerCase();
-
-  // Must match on WHOLE WORDS or clear phrases to avoid false positives
-  if(/\bconcert\b|\bjazz\b|\brock\b|\bchanson\b|\borchestre\b|\bpiano\b|\bchorale\b|\bchoral\b|\bchœur\b|\bchoeur\b|\bchant\b|\bvocal\b|\bvocale\b|\bfado\b|\bblues\b|\bgospel\b|\bopéra\b|\brécital\b|\bfanfare\b|\bharmonie\b|\bphilharmon|\bsymphon|\blyrique\b|\bquatuor\b|\bmusique\b|\bmusical\b|\bmusicale\b|\bbal \b|musique live|soirée musicale/.test(r)) return 'musique';
-  if(/\bcinéma\b|\bciné\b|\bfilm\b|\bprojection\b|\bdocumentaire\b/.test(r)) return 'cinema';
-  if(/\bthéâtre\b|\bspectacle\b|\bcomédie\b|\bdanse\b|\bballet\b|\bcirque\b|stand.up|one.man.show|\bimpro\b/.test(r)) return 'theatre';
-  if(/\bexposition\b|\bgalerie\b|\bvernissage\b|\bpeinture\b|\bsculpture\b|exposition d|\bmusée\b/.test(r)) return 'expo';
-  if(/\benfants?\b|\bjunior\b|\bjeunesse\b|\bconte\b|\bmarionnette\b|jeune public/.test(r)) return 'enfants';
-  if(/portes? ouvertes?|visite du domaine|visite de cave|visite guidée/.test(r)) return 'portes-ouvertes';
-  // Degustation: only match wine/food tasting — NOT "cave" alone (too common in addresses)
-  if(/\bdégustation\b|degustation|\boenolog|\bvignoble\b|wine tasting|cave à vin|bar à vin|accord mets|domaine viticole|vendanges|millésime/.test(r)) return 'degustation';
-  if(/gastronom|culinaire|\bgourmand\b|\bgourmet\b|\bbanquet\b|\bbrunch\b|food truck|table d.hôte|marché gourmand|repas gastronomique|dîner gastronomique|art culinaire|fête de la gastronomie/.test(r)) return 'gastronomie';
-  if(/\bbrocante\b|vide.grenier|vide grenier|\bpuces\b|\bbraderie\b/.test(r)) return 'brocante';
-  if(/\bmarché\b|marchés du/.test(r)) return 'marche';
-  // Sport: only clear sports activities, NOT job events with transport/logistics keywords
-  if(/\byoga\b|\bmarathon\b|\btrail\b|\btriathlon\b|\bcyclisme\b|\bnatation\b|\brugby\b|\bbasket\b|\btennis\b|\bfootball\b|\bvolley\b|\bescalade\b|\bkaraté\b|\bjudo\b|tournoi sportif|compétition sportive|\bvélo\b|\bcycliste\b|balade vélo|vélo balade/.test(r)) return 'sport';
-  if(/randonnée|\bbalade\b|\bnature\b|\bforêt\b|\bjardin\b|\bbotanique\b|\bfaune\b|\bflore\b/.test(r)) return 'nature';
-  if(/\bfestival\b|\bfête\b|fête de|foire de|\bcarnaval\b|\bkermesse\b/.test(r)) return 'fete';
-  if(/\batelier\b|\bworkshop\b|\binitiation\b/.test(r)) return 'ateliers';
-  if(/\bvisite\b|\bpatrimoine\b|\barchéol|\bcathédrale\b|\babbaye\b|\bchâteau\b|\bprieuré\b|\bmédiéval\b/.test(r)) return 'patrimoine';
-  if(/\bconférence\b|\bdébat\b|\bcauserie\b|\bcolloque\b/.test(r)) return 'patrimoine';
-  return 'patrimoine';
-}
+    '
