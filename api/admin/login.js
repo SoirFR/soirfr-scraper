@@ -5,13 +5,18 @@
 //
 //   POST { password }                       -> { ok: true, token } on success
 //   POST { recoveryCode, newPassword }       -> { ok: true } — resets the
-//                                               password using the recovery
-//                                               code, no login required
+//                                               password using ANY unused
+//                                               recovery code, no login
+//                                               required
 //
-// Password + recovery code are stored as hashes in the admin_auth table
-// (single row, id=1), not in an env var — an env var can't be rewritten by
-// a serverless function at runtime, a DB row can, which is what makes
-// self-service recovery possible at all.
+// There are 5 single-use recovery codes (admin_recovery_codes table), not
+// one — losing or using one still leaves others. Each successful reset
+// consumes exactly the one code that was used; the rest stay valid.
+//
+// Password is stored as a hash in admin_auth (single row, id=1), not in an
+// env var — an env var can't be rewritten by a serverless function at
+// runtime, a DB row can, which is what makes self-service recovery possible
+// at all.
 //
 // Frontend stores the login token in localStorage and sends it as
 // Authorization: Bearer <token> for every subsequent admin request.
@@ -48,21 +53,21 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Le nouveau mot de passe doit faire au moins 8 caractères' });
     }
 
-    const { data, error } = await supabase
-      .from('admin_auth')
-      .select('recovery_code_hash')
-      .eq('id', 1)
-      .single();
+    const { data: codes, error: codesError } = await supabase
+      .from('admin_recovery_codes')
+      .select('id, code_hash')
+      .is('used_at', null);
 
-    if (error || !data) {
-      console.error('admin_auth lookup failed:', error);
+    if (codesError) {
+      console.error('admin_recovery_codes lookup failed:', codesError);
       return res.status(500).json({ error: 'Server misconfigured' });
     }
 
-    const codeOk = verifySecret(recoveryCode.trim(), data.recovery_code_hash);
-    if (!codeOk) {
+    const trimmed = recoveryCode.trim();
+    const matched = (codes || []).find(c => verifySecret(trimmed, c.code_hash));
+    if (!matched) {
       await new Promise(r => setTimeout(r, 250 + Math.random() * 250));
-      return res.status(401).json({ error: 'Code de récupération incorrect' });
+      return res.status(401).json({ error: 'Code de récupération incorrect ou déjà utilisé' });
     }
 
     const newHash = hashSecret(newPassword);
@@ -76,7 +81,14 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: 'Échec de la mise à jour du mot de passe' });
     }
 
-    return res.status(200).json({ ok: true, reset: true });
+    // Burn only the one code that was used — the others stay valid.
+    await supabase
+      .from('admin_recovery_codes')
+      .update({ used_at: new Date().toISOString() })
+      .eq('id', matched.id);
+
+    const remaining = (codes || []).length - 1;
+    return res.status(200).json({ ok: true, reset: true, codesRemaining: remaining });
   }
 
   // ── Normal login ───────────────────────────────────────────────────────
