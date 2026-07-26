@@ -63,19 +63,48 @@ module.exports = async function handler(req, res) {
     results.push({ source: 'expire_maintenance', found: expired, added: 0 });
   } catch (e) { errors.push({ source: 'expire_maintenance', error: e.message }); }
 
-  // ── 1. eTerritoire Bourgogne-Franche-Comté ──────────────────────────────
-  // Confirmed: 4,528 events for dept 71 alone, paginated at /2 /3 etc.
+  // ── 1a. Achalon (Office de Tourisme Chalon-sur-Saône) — JSON-LD + tariffs ─
+  // Replaces the old Infolocale scraper, whose hardcoded URL 404s (confirmed
+  // 26 Jul 2026 — infolocale.fr restructured at some point, scraper was
+  // silently returning ~0 real inserts via its regex fallback ever since).
+  // Achalon exposes full schema.org Event JSON-LD AND an embedded tariffs
+  // object with real prices, plus a click-to-reveal phone number — richer
+  // than eterritoire for the same Chalon-sur-Saône area events.
+  //
+  // Runs BEFORE eterritoire on purpose: cross-source duplicates are caught
+  // by the dedup_key unique index (same title+date+location = same row),
+  // and whichever source inserts FIRST wins — the later insert attempt for
+  // the same event just gets silently rejected. Achalon/LeJSL go first so
+  // that when the same event exists on both, soirfr.com links to their
+  // richer page (real price/coordinates) instead of eterritoire's thinner
+  // one. eterritoire still runs afterward for its own unique coverage
+  // (Côte-d'Or, Yonne, Nièvre, Doubs, Jura, Haute-Saône, Belfort — none of
+  // which achalon/LeJSL touch).
+  try { results.push(await scrapeAchalon(dateFrom)); }
+  catch (e) { errors.push({ source: 'achalon', error: e.message }); }
+
+  // ── 1b. Le JSL (Journal de Saône-et-Loire) "PourSortir" agenda ──────────
+  // Department-wide listing pages use full schema.org Event microdata per
+  // card (name, url, description, startDate, theme, city, lat/lng) — no
+  // detail-page visit needed. NOTE: detail pages themselves are client-side
+  // rendered (time/price/organizer load via JS after page load), so those
+  // richer fields are NOT reachable by a plain server-side fetch — only the
+  // listing card fields above are. Good date + real geo-coordinates though,
+  // which is more than most of our other sources give us. Also runs before
+  // eterritoire for the same dedup-priority reason as achalon above.
+  try { results.push(await scrapeLejsl(dateFrom)); }
+  catch (e) { errors.push({ source: 'lejsl', error: e.message }); }
+
+  // ── 2. eTerritoire Bourgogne-Franche-Comté ──────────────────────────────
+  // Confirmed: 4,528 events for dept 71 alone, paginated at /2 /3 etc. Kept
+  // for its region-wide reach beyond Saône-et-Loire — see note above.
   try { results.push(await scrapeETerritoire(dateFrom)); }
   catch (e) { errors.push({ source: 'eterritoire', error: e.message }); }
 
-  // ── 2. Agenda Culturel 71 — RSS feed ───────────────────────────────────
+  // ── 3. Agenda Culturel 71 — RSS feed ───────────────────────────────────
   // Confirmed RSS format: https://71.agendaculturel.fr/rss/[category]/
   try { results.push(await scrapeAgendaCulturel71(dateFrom)); }
   catch (e) { errors.push({ source: 'agenda_culturel_71', error: e.message }); }
-
-  // ── 3. Infolocale ──────────────────────────────────────────────────────
-  try { results.push(await scrapeInfolocale(dateFrom)); }
-  catch (e) { errors.push({ source: 'infolocale', error: e.message }); }
 
   // ── 4. Calendrier des Brocantes (returns real JSON with lat/lng) ────────
   try { results.push(await scrapeCalendrierBrocantes(dateFrom)); }
@@ -433,56 +462,129 @@ function getXmlText(xml, tag) {
 }
 
 // ── Infolocale ────────────────────────────────────────────────────────────
-async function scrapeInfolocale(dateFrom) {
-  let added = 0, found = 0;
-  // Infolocale URL structure — department pages
-  const URLS = [
-    'https://www.infolocale.fr/agenda/saone-et-loire/',
-    'https://www.infolocale.fr/agenda/cote-d-or/',
-  ];
+// ── Achalon (Office de Tourisme Chalon-sur-Saône) ──────────────────────────
+// Listing page is a static HTML page linking to /offres/<slug>/ detail pages.
+// Each detail page carries full schema.org Event JSON-LD (name, description,
+// startDate/endDate, location+geo, image) AND a separate embedded tariffs
+// object (real price) plus a click-to-reveal phone number rendered as a
+// data-label attribute — both present in the raw server HTML, confirmed via
+// direct fetch (not JS-injected), so a plain scrape gets all of it.
+async function scrapeAchalon(dateFrom) {
+  let found = 0, added = 0;
+  const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+  const LISTING = 'https://www.achalon.com/homepage-tourisme/agenda/exhaustif/';
 
-  for (const url of URLS) {
+  const html = await fetch(LISTING, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) }).then(r => r.text());
+  const links = [...new Set([...html.matchAll(/href="(https:\/\/www\.achalon\.com\/offres\/[^"]+?)"/g)].map(m => m[1]))];
+
+  for (const url of links.slice(0, 60)) {
+    if (ADDS_USED >= ADD_BUDGET) break;
     try {
-      const res = await fetch(url, {
-        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36' }
+      const dhtml = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) }).then(r => r.text());
+      const ldMatch = dhtml.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/);
+      if (!ldMatch) continue;
+      let data;
+      try { data = JSON.parse(ldMatch[1]); } catch { continue; }
+      const graph = data['@graph'] || [data];
+      const ev = graph.find(g => g['@type'] === 'Event');
+      if (!ev || !ev.startDate) continue;
+      found++;
+
+      const startDate = ev.startDate.slice(0, 10);
+      const endDate = ev.endDate ? ev.endDate.slice(0, 10) : null;
+      if ((endDate || startDate) < dateFrom) continue;
+
+      const priceM = dhtml.match(/"tariffStandard":"([\d.]+)"/);
+      const phoneM = dhtml.match(/data-label="Contact[^"]*-\s*([\d\s.]{9,15})"/);
+      const addr = (ev.location && ev.location.address) || {};
+      const geo = (ev.location && ev.location.geo) || {};
+
+      let description = ev.description || null;
+      if (phoneM) description = (description ? description + '\n\n' : '') + `Contact : ${phoneM[1].trim()}`;
+
+      const ins = await insertEvent({
+        title: ev.name,
+        description,
+        category: mapCat((ev.name || '') + ' ' + (ev.description || '')),
+        address: addr.streetAddress || null,
+        city: addr.addressLocality || null,
+        postcode: addr.postalCode || null,
+        department: '71', region: 'Bourgogne-Franche-Comté',
+        lat: geo.latitude, lng: geo.longitude,
+        starts_at: ev.startDate, ends_at: ev.endDate || null,
+        image_url: Array.isArray(ev.image) ? ev.image[0] : (ev.image || null),
+        price_min: priceM ? parseFloat(priceM[1]) : null,
+        is_free: !priceM && /gratuit/i.test(dhtml),
+        booking_url: url, source_url: url,
+        source_event_id: url.split('/').filter(Boolean).pop(),
+        source_name: 'achalon',
       });
-      if (!res.ok) continue;
-      const html = await res.text();
-
-      // Try JSON-LD first
-      const r = await extractJsonLd(html, '71', 'Bourgogne-Franche-Comté', 'infolocale', url, dateFrom, null);
-      found += r.found; added += r.added;
-
-      // Also try structured event blocks
-      if (r.found === 0) {
-        const eventBlocks = html.matchAll(/class="[^"]*event[^"]*"[^>]*>([\s\S]*?)(?=class="[^"]*event[^"]*"|<\/section>)/gi);
-        for (const block of eventBlocks) {
-          const content = block[1];
-          const titleM = content.match(/<h[23][^>]*>([^<]+)<\/h[23]>/i);
-          const dateM = content.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-          const cityM = content.match(/\b([A-ZÀÂÉÈÊËÙÛ][a-zàâéèêëùû\-]+)\b/);
-          if (!titleM) continue;
-          found++;
-          let startDate = dateM ? `${dateM[3]}-${dateM[2].padStart(2,'0')}-${dateM[1].padStart(2,'0')}` : null;
-          if (!startDate || startDate < dateFrom) continue;
-          const ins = await insertEvent({
-            title: titleM[1].trim(),
-            category: mapCat(titleM[1]),
-            city: cityM ? cityM[1] : null,
-            department: '71',
-            region: 'Bourgogne-Franche-Comté',
-            starts_at: startDate,
-            source_url: url,
-            source_event_id: titleM[1] + startDate,
-            source_name: 'infolocale',
-          });
-          if (ins) added++;
-        }
-      }
+      if (ins) added++;
     } catch {}
-    await sleep(600);
+    await sleep(300);
   }
-  return { source: 'Infolocale', found, added };
+  return { source: 'Achalon', found, added };
+}
+
+// ── Le JSL (Journal de Saône-et-Loire) "PourSortir" agenda ────────────────
+// Department-wide listing (category "Loisir" = all categories combined) —
+// each card is full schema.org Event microdata: name, url, description,
+// startDate (ISO), theme (category tag), addressLocality, lat/lng. All of it
+// is in the raw server HTML (confirmed via fetch), so no detail-page visit
+// is needed for these fields. Detail pages themselves render time/price/
+// organizer client-side via JS after load — NOT visible to a plain fetch —
+// so exact time-of-day and price aren't reachable here; date+city+geo are.
+async function scrapeLejsl(dateFrom) {
+  let found = 0, added = 0;
+  const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+  const BASE = 'https://www.lejsl.com/pour-sortir/Loisir/Bourgogne/Saone-et-loire';
+  const MAX_PAGES = 15; // ~30 events/page; budget-limited anyway via ADD_BUDGET
+
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    if (ADDS_USED >= ADD_BUDGET) break;
+    const url = page === 1 ? BASE : `${BASE}?page=${page}`;
+    let html;
+    try {
+      html = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) }).then(r => r.text());
+    } catch { break; }
+
+    const blocks = [...html.matchAll(/itemtype="https:\/\/schema\.org\/Event">([\s\S]*?)<\/li>/g)];
+    if (!blocks.length) break;
+
+    for (const [, block] of blocks) {
+      const titleM = block.match(/<h2 itemprop="name"><a itemprop="url" href="([^"]+)"[^>]*>([^<]+)<\/a>/);
+      const dateM = block.match(/itemprop="startDate" content="([^"]+)"/);
+      if (!titleM || !dateM) continue;
+      found++;
+
+      const startDate = dateM[1].slice(0, 10);
+      if (startDate < dateFrom) continue;
+
+      const descM = block.match(/itemprop="description">([^<]*)</);
+      const themeM = block.match(/class="theme">([^<]+)</);
+      const cityM = block.match(/itemprop="addressLocality">([^<]+)</);
+      const latM = block.match(/itemprop="latitude" content="([^"]+)"/);
+      const lngM = block.match(/itemprop="longitude" content="([^"]+)"/);
+      const href = titleM[1].startsWith('http') ? titleM[1] : `https://www.lejsl.com${titleM[1]}`;
+
+      const ins = await insertEvent({
+        title: titleM[2].trim(),
+        description: descM ? descM[1].trim() : null,
+        category: mapCat(titleM[2] + ' ' + (themeM ? themeM[1] : '') + ' ' + (descM ? descM[1] : '')),
+        city: cityM ? cityM[1] : null,
+        department: '71', region: 'Bourgogne-Franche-Comté',
+        lat: latM ? latM[1] : null, lng: lngM ? lngM[1] : null,
+        starts_at: dateM[1],
+        source_url: href, booking_url: href,
+        source_event_id: href.split('/').filter(Boolean).slice(-2).join('_'),
+        source_name: 'lejsl',
+      });
+      if (ins) added++;
+      if (ADDS_USED >= ADD_BUDGET) break;
+    }
+    await sleep(400);
+  }
+  return { source: 'LeJSL', found, added };
 }
 
 // ── Calendrier des Brocantes (real JSON with lat/lng!) ────────────────────
