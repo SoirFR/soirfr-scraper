@@ -1129,4 +1129,39 @@ function isJunk(title, description) {
     'bilan de santé', 'permanence sociale',
     'permanence juridique', 'permanence administrative',
     // Social/retirement agency events
-    '
+    'carsat', 'cnav', 'caf de ', 'caf du ',
+    'mutualité française', 'cpam', 'urssaf',
+    // Formation/training events — broad match
+    ' formation ', 'de formation', 'en formation',
+    'stage de ', 'atelier de formation',
+    'session de formation', 'formation professionnelle',
+  ];
+
+  return junkPhrases.some(kw => t.includes(kw));
+}
+
+function mapCat(raw) {
+  if(!raw) return 'patrimoine';
+  const r = raw.toLowerCase();
+
+  // Must match on WHOLE WORDS or clear phrases to avoid false positives
+  if(/\bconcert\b|\bjazz\b|\brock\b|\bchanson\b|\borchestre\b|\bpiano\b|\bchorale\b|\bchoral\b|\bchœur\b|\bchoeur\b|\bchant\b|\bvocal\b|\bvocale\b|\bfado\b|\bblues\b|\bgospel\b|\bopéra\b|\brécital\b|\bfanfare\b|\bharmonie\b|\bphilharmon|\bsymphon|\blyrique\b|\bquatuor\b|\bmusique\b|\bmusical\b|\bmusicale\b|\bbal \b|musique live|soirée musicale/.test(r)) return 'musique';
+  if(/\bcinéma\b|\bciné\b|\bfilm\b|\bprojection\b|\bdocumentaire\b/.test(r)) return 'cinema';
+  if(/\bthéâtre\b|\bspectacle\b|\bcomédie\b|\bdanse\b|\bballet\b|\bcirque\b|stand.up|one.man.show|\bimpro\b/.test(r)) return 'theatre';
+  if(/\bexposition\b|\bgalerie\b|\bvernissage\b|\bpeinture\b|\bsculpture\b|exposition d|\bmusée\b/.test(r)) return 'expo';
+  if(/\benfants?\b|\bjunior\b|\bjeunesse\b|\bconte\b|\bmarionnette\b|jeune public/.test(r)) return 'enfants';
+  if(/portes? ouvertes?|visite du domaine|visite de cave|visite guidée/.test(r)) return 'portes-ouvertes';
+  // Degustation: only match wine/food tasting — NOT "cave" alone (too common in addresses)
+  if(/\bdégustation\b|degustation|\boenolog|\bvignoble\b|wine tasting|cave à vin|bar à vin|accord mets|domaine viticole|vendanges|millésime/.test(r)) return 'degustation';
+  if(/gastronom|culinaire|\bgourmand\b|\bgourmet\b|\bbanquet\b|\bbrunch\b|food truck|table d.hôte|marché gourmand|repas gastronomique|dîner gastronomique|art culinaire|fête de la gastronomie/.test(r)) return 'gastronomie';
+  if(/\bbrocante\b|vide.grenier|vide grenier|\bpuces\b|\bbraderie\b/.test(r)) return 'brocante';
+  if(/\bmarché\b|marchés du/.test(r)) return 'marche';
+  // Sport: only clear sports activities, NOT job events with transport/logistics keywords
+  if(/\byoga\b|\bmarathon\b|\btrail\b|\btriathlon\b|\bcyclisme\b|\bnatation\b|\brugby\b|\bbasket\b|\btennis\b|\bfootball\b|\bvolley\b|\bescalade\b|\bkaraté\b|\bjudo\b|tournoi sportif|compétition sportive|\bvélo\b|\bcycliste\b|balade vélo|vélo balade/.test(r)) return 'sport';
+  if(/randonnée|\bbalade\b|\bnature\b|\bforêt\b|\bjardin\b|\bbotanique\b|\bfaune\b|\bflore\b|sylvothérapie|sylvo.?thérapie|bain de forêt|forest.?bathing/.test(r)) return 'nature';
+  if(/\bfestival\b|\bfête\b|fête de|foire de|\bcarnaval\b|\bkermesse\b/.test(r)) return 'fete';
+  if(/\batelier\b|\bworkshop\b|\binitiation\b/.test(r)) return 'ateliers';
+  if(/\bvisite\b|\bpatrimoine\b|\barchéol|\bcathédrale\b|\babbaye\b|\bchâteau\b|\bprieuré\b|\bmédiéval\b/.test(r)) return 'patrimoine';
+  if(/\bconférence\b|\bdébat\b|\bcauserie\b|\bcolloque\b/.test(r)) return 'patrimoine';
+  return 'patrimoine';
+}
