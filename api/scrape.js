@@ -105,6 +105,13 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeDestinationSaoneEtLoire(dateFrom)); }
   catch (e) { errors.push({ source: 'destination71', error: e.message }); }
 
+  // ── 1d. Animation2c (Côte Chalonnaise community association) ───────────
+  // Small, hyper-local, but a REAL structured date field (YYMMDD sort key)
+  // instead of guessed free text — reads a curated Google Sheet, not their
+  // noisy blog. Single fetch, cheap to run every time.
+  try { results.push(await scrapeAnimation2c(dateFrom)); }
+  catch (e) { errors.push({ source: 'animation2c', error: e.message }); }
+
   // ── 2. eTerritoire Bourgogne-Franche-Comté ──────────────────────────────
   // Confirmed: 4,528 events for dept 71 alone, paginated at /2 /3 etc. Kept
   // for its region-wide reach beyond Saône-et-Loire — see note above.
@@ -753,6 +760,141 @@ function titleCaseCity(s) {
   return s.toLowerCase().split(/([\s-])/)
     .map(w => (/^[\s-]$/.test(w) ? w : (w ? w.charAt(0).toUpperCase() + w.slice(1) : w)))
     .join('');
+}
+
+// ── Animation2c (Côte Chalonnaise community association) ─────────────────
+// Small local association ("A2c") covering Givry and the surrounding Côte
+// Chalonnaise villages. Their own blog (Blogger) is noisy — newsletter
+// roundups, closure notices — so instead of scraping that, this reads the
+// curated master calendar they maintain as a published Google Sheet (linked
+// from their site's own listing page), pulled as CSV. Unlike destination71,
+// each row carries a REAL structured date: column 1 is a YYMMDD sort key
+// (e.g. "260702" = 2 July 2026) — not something guessed out of free text.
+// Column 4 is then "[Jour] DD Mois [Année] - Commune - Titre - détails...".
+// Small, single-fetch source (~170 rows total covering the whole 2026-2027
+// season) — cheap to run every time, no pagination/budget concerns.
+// NOTE: this is a Google Sheets "publish to web" link — if A2c ever
+// re-publish under a new link this URL 404s and needs updating from
+// https://www.animation2c.fr/p/listing-des-manifestations.html (find the
+// embedded Google Sheets iframe, take its /pub?output=csv variant).
+async function scrapeAnimation2c(dateFrom) {
+  let found = 0, added = 0;
+  const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS6Gj8CAfiEQf3okbFH4oQWh1_E4ol0RGfaNOGcGsCsJBBp66bIk3nf5SriRTdxb4sUgWTtFBT1qJef/pub?output=csv';
+  const MONTHS = { janvier:1, 'février':2, fevrier:2, mars:3, avril:4, mai:5, juin:6,
+    juillet:7, 'août':8, aout:8, septembre:9, octobre:10, novembre:11, 'décembre':12, decembre:12 };
+  const MONTH_ALT = Object.keys(MONTHS).join('|');
+  // Real events always open with a weekday name, "Tout le mois...", or
+  // "Du ... au ...". This also filters out the sheet's own intro/sidebar
+  // text and vague placeholders ("Début février 2027", blank rows) that
+  // share a valid-looking YYMMDD id but aren't a parseable single event.
+  const PREFIX_RE = /^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|tout le mois|du\s)/i;
+  const WD = 'lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche';
+  // "Du [jour] DD [mois] au [jour] DD mois [année]" — the starting month is
+  // optional in the text ("Du 27 au 29 mars 2026" — only the end carries a
+  // month, meaning the start shares it); the year is optional on either end.
+  const RANGE_RE = new RegExp(
+    `du\\s+(?:(?:${WD})\\s+)?(\\d{1,2})(?:er)?\\s*(?:(${MONTH_ALT}))?\\s*au\\s+(?:(?:${WD})\\s+)?(\\d{1,2})(?:er)?\\s+(${MONTH_ALT})(?:\\s+(\\d{4}))?`,
+    'i'
+  );
+
+  let text;
+  try {
+    text = await fetch(CSV_URL, { signal: AbortSignal.timeout(15000) }).then(r => r.text());
+  } catch (e) { return { source: 'Animation2c', found: 0, added: 0 }; }
+
+  for (const row of parseCsvRfc4180(text)) {
+    if (ADDS_USED >= ADD_BUDGET) break;
+    const idCol = (row[0] || '').trim();
+    const seqCol = (row[1] || '').trim();
+    const textCol = decodeHtmlEntities((row[3] || '').replace(/""/g, '"').replace(/\s+/g, ' ').trim());
+    if (!/^\d{6}$/.test(idCol) || !PREFIX_RE.test(textCol)) continue;
+
+    const yy = parseInt(idCol.slice(0, 2), 10);
+    const mm = parseInt(idCol.slice(2, 4), 10);
+    const dd = parseInt(idCol.slice(4, 6), 10);
+    if (mm < 1 || mm > 12 || dd < 1 || dd > 31) continue;
+    const idIso = `${2000 + yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    found++;
+
+    // Split on "hyphen followed by whitespace" rather than literal " - ":
+    // commune names like "Saint-Denis-de-Vaux" glue their hyphens directly
+    // to letters on both sides (no match), while the sheet's real field
+    // separators always have at least a trailing space — even on the rare
+    // row where the leading space got typo'd away ("2026- Givry").
+    const parts = textCol.split(/-\s+/).map(p => p.trim()).filter(Boolean);
+    const city = parts[1] ? parts[1] : null;
+    const title = (parts[2] || parts[1] || parts[0]).slice(0, 200);
+    const description = parts.length > 3 ? parts.slice(3).join(' - ').slice(0, 1000) : null;
+
+    // Start/end date: the id's YYMMDD is right for single-day bullets, but
+    // spot-checking against the live sheet found at least one multi-day
+    // "Du X au Y" row where the id drifted from the text's own stated dates
+    // (an Oenorires listing whose id read 9 Feb while its text said "Du 31
+    // janvier au 7 février") — a human-maintained-sheet slip, not a pattern.
+    // So for range phrasing, trust the text's own start/end over the id.
+    let startIso = idIso, endsAt = null;
+    const rangeM = parts[0].match(RANGE_RE);
+    if (rangeM) {
+      const year = rangeM[5] ? parseInt(rangeM[5], 10) : (2000 + yy);
+      const endMonth = MONTHS[rangeM[4].toLowerCase()];
+      const startMonth = rangeM[2] ? MONTHS[rangeM[2].toLowerCase()] : endMonth;
+      const startDay = parseInt(rangeM[1], 10), endDay = parseInt(rangeM[3], 10);
+      if (startDay && startMonth) startIso = `${year}-${String(startMonth).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
+      if (endDay && endMonth) endsAt = `${year}-${String(endMonth).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
+    }
+    // Skip only if fully over — judge by the end date when there is one,
+    // same convention as the JSON-LD sources above (an exhibition that
+    // started last month but runs into next month is still live).
+    if ((endsAt || startIso) < dateFrom) continue;
+
+    // Time-of-day, only if actually stated somewhere in the row ("18h00",
+    // "9 h 30") — otherwise leave starts_at date-only (no invented time),
+    // same convention as the agenda_culturel_71 free-text fallback above.
+    const timeM = textCol.match(/(\d{1,2})\s?h\s?(\d{2})?\b/i);
+    const startsAt = timeM
+      ? `${startIso}T${String(timeM[1]).padStart(2, '0')}:${timeM[2] || '00'}:00`
+      : startIso;
+
+    const ins = await insertEvent({
+      title, description, category: mapCat(title),
+      // No department: this curated list isn't strictly Saône-et-Loire —
+      // it includes nearby regional picks too (a Dijon exhibition showed up
+      // in the same sheet), so '71' would mislabel those. City + region are
+      // the honest fields here; geocodeMissingEvents() backfills lat/lng
+      // from city regardless of department being known.
+      city, region: 'Bourgogne-Franche-Comté',
+      starts_at: startsAt, ends_at: endsAt,
+      source_url: 'https://www.animation2c.fr/p/listing-des-manifestations.html',
+      source_event_id: `${idCol}-${seqCol}`,
+      source_name: 'animation2c',
+    });
+    if (ins) added++;
+  }
+  return { source: 'Animation2c', found, added };
+}
+
+// Minimal RFC4180 CSV parser — handles quoted fields with embedded commas,
+// doubled-quote escaping ("" -> "), and embedded newlines (several sheet
+// cells here are genuinely multi-line), none of which a naive text.split
+// on ',' / '\n' can do safely.
+function parseCsvRfc4180(t) {
+  const rows = [];
+  let row = [], field = '', inQuotes = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (inQuotes) {
+      if (c === '"') { if (t[i + 1] === '"') { field += '"'; i++; } else inQuotes = false; }
+      else field += c;
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === '\r') { /* skip */ }
+      else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+      else field += c;
+    }
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
 }
 
 // ── Calendrier des Brocantes (real JSON with lat/lng!) ────────────────────
