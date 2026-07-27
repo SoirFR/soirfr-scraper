@@ -137,15 +137,43 @@ export default async function handler(req, res) {
     }
 
     // ── 7. Merge: user fields take precedence over Vision ──────────────
-    const merged = mergeEventData(eventData, visionData);
+    // A flyer can carry several distinct dates for the SAME event (a
+    // season program, a poster listing 3-4 separate weekends). Vision is
+    // prompted to return one object per specific date in that case. We
+    // only collapse everything down to Vision's first date when the
+    // submitter typed their own single date in the form — that's an
+    // explicit "just this one" override. Otherwise every date Vision found
+    // becomes its own pending_events row (same title/venue, different
+    // starts_at/ends_at). The site's existing display logic already
+    // groups rows that share a title + location into one map pin / one
+    // card showing only its specific dates, so no schema or frontend
+    // change is needed to make multi-date events work — just don't throw
+    // away the extra dates at submission time like this used to.
+    const visionEvents = Array.isArray(visionData?.events) ? visionData.events : [];
+    const userGaveOwnDate = !!(eventData.starts_at && String(eventData.starts_at).trim());
+    const mergedList = (!userGaveOwnDate && visionEvents.length > 1)
+      ? visionEvents.map(ve => mergeEventData(eventData, { events: [ve] }))
+      : [mergeEventData(eventData, visionData)];
 
-    // ── 8. Insert into pending_events ──────────────────────────────────
-    const row = {
+    // ── 8. Insert into pending_events (one row per date) ────────────────
+    const baseRow = {
       submitter_name: submitter.name.trim(),
       submitter_email: submitter.email.trim().toLowerCase(),
       submitter_phone: submitter.phone?.trim() || null,
       submitter_org: submitter.organization?.trim() || null,
 
+      uploaded_files: uploadedFiles,
+      vision_raw: visionData,
+      vision_used: visionUsed,
+
+      status: 'pending',
+      submitted_at: new Date().toISOString(),
+      submitted_ip: getClientIp(req),
+      user_agent: req.headers['user-agent']?.substring(0, 500) || null
+    };
+
+    const rows = mergedList.map(merged => ({
+      ...baseRow,
       title: merged.title,
       description: merged.description,
       starts_at: merged.starts_at,
@@ -160,23 +188,13 @@ export default async function handler(req, res) {
       price_max: merged.price_max,
       is_free: merged.is_free,
       source_url: merged.source_url,
-      booking_url: merged.booking_url,
-
-      uploaded_files: uploadedFiles,
-      vision_raw: visionData,
-      vision_used: visionUsed,
-
-      status: 'pending',
-      submitted_at: new Date().toISOString(),
-      submitted_ip: getClientIp(req),
-      user_agent: req.headers['user-agent']?.substring(0, 500) || null
-    };
+      booking_url: merged.booking_url
+    }));
 
     const { data: inserted, error: insertErr } = await supabase
       .from('pending_events')
-      .insert(row)
-      .select('id')
-      .single();
+      .insert(rows)
+      .select('id');
 
     if (insertErr) {
       console.error('DB insert failed:', insertErr);
@@ -186,7 +204,9 @@ export default async function handler(req, res) {
     // ── 9. Done ────────────────────────────────────────────────────────
     return res.status(200).json({
       ok: true,
-      id: inserted.id,
+      id: inserted[0]?.id,
+      ids: inserted.map(r => r.id),
+      dates_found: rows.length,
       files_uploaded: uploadedFiles.length,
       vision_used: visionUsed
     });
