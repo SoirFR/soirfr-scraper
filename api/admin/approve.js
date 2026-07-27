@@ -120,7 +120,14 @@ export default async function handler(req, res) {
     source_name: 'user_submission',
     source_url: pending.source_url,
     source_event_id: `submission-${pending.id}`,
-    status: 'published',
+    // 'active' — NOT 'published'. Every scraper (scrape.js, scrape-recurring,
+    // scrape-markets, scrape-oa, scrape-vostickets) writes status:'active',
+    // and that's the ONLY status value the public site's display query
+    // (the events_near_point RPC) filters on. 'published' isn't recognized
+    // by anything that reads events for display — it only ever meant
+    // "invisible". Also matches the 'active' -> 'expired' lifecycle the
+    // nightly cron already runs off of, so these rows age out correctly too.
+    status: 'active',
     is_verified: true,
     is_recurring: false
   };
