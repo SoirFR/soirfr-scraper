@@ -95,6 +95,16 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeLejsl(dateFrom)); }
   catch (e) { errors.push({ source: 'lejsl', error: e.message }); }
 
+  // ── 1c. Destination Saône-et-Loire (Route71 / CDT71 tourism board) ─────
+  // Departmental tourism office site — likely underlies several town-level
+  // tourism sites too (autun-tourisme.com references the same Tourinsoft
+  // backend seen here), so one scraper here covers more ground than building
+  // six separate town scrapers. Runs after achalon/lejsl (richer, Chalon-area
+  // specific — should win any dedup_key collision) but before eterritoire
+  // (broader region-wide dump, lowest specificity of the three).
+  try { results.push(await scrapeDestinationSaoneEtLoire(dateFrom)); }
+  catch (e) { errors.push({ source: 'destination71', error: e.message }); }
+
   // ── 2. eTerritoire Bourgogne-Franche-Comté ──────────────────────────────
   // Confirmed: 4,528 events for dept 71 alone, paginated at /2 /3 etc. Kept
   // for its region-wide reach beyond Saône-et-Loire — see note above.
@@ -585,6 +595,164 @@ async function scrapeLejsl(dateFrom) {
     await sleep(400);
   }
   return { source: 'LeJSL', found, added };
+}
+
+// ── Destination Saône-et-Loire (Route71 / CDT71 tourism board) ────────────
+// Departmental tourism board site (Drupal 10, no schema.org/microdata at all
+// — pure custom HTML: .OfferTeaser cards on the listing, .properties /
+// .location-name / accordion sections on detail pages). Confirmed the same
+// Tourinsoft backend also underlies at least autun-tourisme.com, so this one
+// scraper likely captures most of what individual town tourism-office sites
+// would separately offer.
+//
+// ~1517 events across ~127 listing pages (11 events/page) — far too many
+// detail-page fetches for a single run, so this only walks the first N
+// listing pages each run; same-source dedup (KNOWN_BY_SOURCE, keyed off
+// slug+date) means a later run naturally advances onto pages it hasn't
+// reached yet without re-processing pages it already has.
+//
+// Dates are the hard part: there's no structured date field anywhere on the
+// page. The "Ouverture" (opening hours) accordion is free text, and its
+// format varies enormously — some events give a clean "MOIS ANNÉE :" header
+// followed by "* Jour DD Mois : ..." or "Jour DD/MM : ..." bullet lines (one
+// bullet per specific date — a curated one-off show, exactly what SoirFR
+// wants); others describe a recurring schedule with exceptions ("tous les
+// mardis du X au Y", "le mercredi à 10h, fermé le..."). Only the first,
+// clean bulleted pattern is parsed into real dates; anything else is SKIPPED
+// rather than guessed — recurring markets/opening-hours listings aren't
+// really "events" for SoirFR's purposes anyway (that's what scrape-markets/
+// scrape-recurring are for), and a wrong guessed date is worse than no event.
+async function scrapeDestinationSaoneEtLoire(dateFrom) {
+  let found = 0, added = 0;
+  const BASE = 'https://www.destination-saone-et-loire.fr';
+  const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+  const MAX_LISTING_PAGES = 8; // ~11 events/page — later pages covered by later runs
+
+  const MONTHS = { janvier:1, 'février':2, fevrier:2, mars:3, avril:4, mai:5, juin:6,
+    juillet:7, 'août':8, aout:8, septembre:9, octobre:10, novembre:11, 'décembre':12, decembre:12 };
+  const MONTH_ALT = Object.keys(MONTHS).join('|');
+
+  // 1. Collect detail-page links across the first few listing pages
+  const links = new Set();
+  for (let page = 0; page < MAX_LISTING_PAGES; page++) {
+    if (ADDS_USED >= ADD_BUDGET) break;
+    try {
+      const url = `${BASE}/fr/les-evenements-en-saone-et-loire.html?page=${page}`;
+      const html = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) }).then(r => r.text());
+      const pageLinks = [...html.matchAll(/href="(\/fr\/evenement\/[^"]+\.html)"/g)].map(m => m[1]);
+      if (!pageLinks.length) break;
+      pageLinks.forEach(l => links.add(l));
+    } catch { break; }
+    await sleep(400);
+  }
+
+  // 2. Visit each detail page and extract what's there
+  for (const link of links) {
+    if (ADDS_USED >= ADD_BUDGET) break;
+    const slug = link.split('/').pop().replace(/\.html$/, '');
+    try {
+      const url = BASE + link;
+      const html = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10000) }).then(r => r.text());
+
+      const titleM = html.match(/<h1[^>]*>\s*<span>([^<]+)<\/span>/);
+      if (!titleM) continue;
+      found++;
+
+      const openingM = html.match(/<h3[^>]*>\s*Ouverture\s*<\/h3>[\s\S]{0,50}?<div class="accordion-content"[^>]*>([\s\S]*?)<\/div>/);
+      if (!openingM) continue;
+      const dates = parseDestination71Dates(openingM[1], MONTHS, MONTH_ALT, dateFrom);
+      if (!dates.length) continue; // recurring/vague schedule — skip rather than guess
+
+      const title = decodeHtmlEntities(titleM[1].trim()).slice(0, 200);
+      const themeM = html.match(/Th[ée]matique\s*:\s*([^<]+)/);
+      const cityM = html.match(/class="location-name"[^>]*>([^<]+)</);
+      const descM = html.match(/<h3[^>]*>\s*Description\s*<\/h3>[\s\S]{0,50}?<div class="accordion-content"[^>]*>([\s\S]*?)<\/div>/);
+      const imgM = html.match(/<img class="slide-img" src="([^"]+)"/);
+
+      const city = cityM ? titleCaseCity(cityM[1].trim()) : null;
+      const description = descM
+        ? decodeHtmlEntities(descM[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 1000)
+        : null;
+      const category = mapCat(`${title} ${themeM ? themeM[1] : ''}`);
+      const imageUrl = imgM ? (imgM[1].startsWith('http') ? imgM[1] : BASE + imgM[1]) : null;
+
+      for (const d of dates) {
+        if (ADDS_USED >= ADD_BUDGET) break;
+        const ins = await insertEvent({
+          title, description, category, city,
+          department: '71', region: 'Bourgogne-Franche-Comté',
+          starts_at: d.starts_at, ends_at: d.ends_at,
+          image_url: imageUrl,
+          source_url: url, booking_url: url,
+          source_event_id: `${slug}-${d.starts_at}`,
+          source_name: 'destination71',
+        });
+        if (ins) added++;
+      }
+    } catch {}
+    await sleep(350);
+  }
+  return { source: 'Destination Saône-et-Loire', found, added };
+}
+
+// Parse the "Ouverture" accordion free text into discrete dates. Only trusts
+// the clean pattern: a "MOIS ANNÉE :" header line followed by one or more
+// "* Jour DD Mois[/MM] [: reste]" bullet lines. Anything else (recurring
+// schedules, date ranges, opening-hours exceptions) returns [] — no guessing.
+function parseDestination71Dates(raw, MONTHS, MONTH_ALT, dateFrom) {
+  const text = decodeHtmlEntities(raw).replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '\n');
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const headerRe = new RegExp(`^(${MONTH_ALT})\\s+(\\d{4})\\s*:?$`, 'i');
+  const bulletRe = new RegExp(`^\\*?\\s*[A-Za-zÀ-ÿ]+\\.?\\s+(\\d{1,2})(?:\\s+(${MONTH_ALT})|\\/(\\d{1,2}))\\s*\\.?\\s*:?\\s*(.*)$`, 'i');
+
+  const results = [];
+  let currentYear = null;
+  for (const line of lines) {
+    const hM = line.match(headerRe);
+    if (hM) { currentYear = parseInt(hM[2], 10); continue; }
+
+    const bM = line.match(bulletRe);
+    if (!bM) continue;
+    const day = parseInt(bM[1], 10);
+    const month = bM[2] ? MONTHS[bM[2].toLowerCase()] : parseInt(bM[3], 10);
+    if (!day || !month || month < 1 || month > 12 || day < 1 || day > 31) continue;
+
+    let year = currentYear || parseInt(dateFrom.slice(0, 4), 10);
+    let iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    // No header year pinning this line and the date already passed this year
+    // → it means next year (same year-inference rule used in vision.js).
+    if (!currentYear && iso < dateFrom) {
+      year += 1;
+      iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    }
+    if (iso < dateFrom) continue; // fully in the past even after inference — skip
+
+    // Time — "à 19h", "à 19h30", "de 19h à 0h30". Default to 20:00 (typical
+    // evening show start) when no time is given at all.
+    const rest = bM[4] || '';
+    const timeM = rest.match(/(\d{1,2})h(\d{2})?/);
+    const hh = timeM ? String(timeM[1]).padStart(2, '0') : '20';
+    const mm = timeM && timeM[2] ? timeM[2] : '00';
+
+    results.push({ starts_at: `${iso}T${hh}:${mm}:00`, ends_at: null });
+  }
+  return results;
+}
+
+function decodeHtmlEntities(s) {
+  if (!s) return s;
+  return s.replace(/&#0?39;/g, "'").replace(/&rsquo;/g, "'").replace(/&quot;/g, '"')
+    .replace(/&eacute;/g, 'é').replace(/&egrave;/g, 'è').replace(/&ecirc;/g, 'ê')
+    .replace(/&agrave;/g, 'à').replace(/&ccedil;/g, 'ç').replace(/&ocirc;/g, 'ô')
+    .replace(/&ucirc;/g, 'û').replace(/&icirc;/g, 'î').replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+}
+
+function titleCaseCity(s) {
+  return s.toLowerCase().split(/([\s-])/)
+    .map(w => (/^[\s-]$/.test(w) ? w : (w ? w.charAt(0).toUpperCase() + w.slice(1) : w)))
+    .join('');
 }
 
 // ── Calendrier des Brocantes (real JSON with lat/lng!) ────────────────────
