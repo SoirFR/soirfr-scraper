@@ -1487,14 +1487,27 @@ async function geocodeMissingEvents() {
 
   let geocoded = 0;
   for (const ev of missing) {
-    const query = [ev.address, ev.city, ev.postcode, 'France']
-      .filter(Boolean).join(' ');
-    if (!query.trim()) continue;
+    const parts = [ev.address, ev.city, ev.postcode].filter(Boolean);
+    if (!parts.length) continue;
+    const query = parts.join(' ');
+
+    // Two real bugs confirmed by hand against the live API with a stuck
+    // Givry (animation2c) row: (1) appending the literal word "France" —
+    // the old behavior — actively BREAKS matching for short queries; "Givry
+    // France" returns zero results while "Givry" alone or "Givry 71640"
+    // both return a match. The API is France-only anyway, so "France" was
+    // always dead weight and here it was actively harmful. (2) a bare city
+    // name with no postcode/address to anchor it is ambiguous — "Givry"
+    // alone resolves to a same-named hamlet in the Cher, nowhere near the
+    // actual Saône-et-Loire town — so for that bare-city case specifically,
+    // restrict to type=municipality, which correctly returns the real town.
+    // Full address/postcode queries (already precise) skip that restriction
+    // since it could wrongly exclude a valid street/housenumber match.
+    const isBareCity = !ev.address && !ev.postcode;
+    const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1${isBareCity ? '&type=municipality' : ''}`;
 
     try {
-      const r = await fetch(
-        `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1`
-      );
+      const r = await fetch(url);
       if (!r.ok) continue;
       const data = await r.json();
       const feat = data.features?.[0];
