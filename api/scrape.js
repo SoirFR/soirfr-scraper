@@ -123,6 +123,26 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeAgendaCulturel71(dateFrom)); }
   catch (e) { errors.push({ source: 'agenda_culturel_71', error: e.message }); }
 
+  // Geocode any events missing coordinates using city/postcode — placed
+  // HERE rather than at the very end (where it used to live). It only ran
+  // after 11 other scrapers, several with per-item sleeps (eterritoire's 26
+  // pages, brocabrac/vide-greniers' 14 departments each, etc.), and once
+  // destination71 + animation2c pushed the run's total length up further,
+  // that queued this step behind enough work that it looks like it wasn't
+  // reliably finishing before the function's time budget ran out — real
+  // symptom: Givry events from animation2c (whose rows only ever carry a
+  // city, no lat/lng, same as destination71 and eterritoire) sitting with
+  // location = null days after they were inserted, invisible on the map
+  // even though the row itself was correct. destination71/animation2c/
+  // eterritoire/agenda_culturel_71 (the sources that actually rely on this
+  // fallback rather than shipping their own coordinates) have all run by
+  // this point, so moving the call here — before the slower, sleep-heavy
+  // remaining scrapers — gives it a real chance to complete every run.
+  try {
+    const geocoded = await geocodeMissingEvents();
+    results.push({ source: 'geocoder', found: geocoded, added: geocoded });
+  } catch(e) { errors.push({ source: 'geocoder', error: e.message }); }
+
   // ── 4. Calendrier des Brocantes (returns real JSON with lat/lng) ────────
   try { results.push(await scrapeCalendrierBrocantes(dateFrom)); }
   catch (e) { errors.push({ source: 'calendrier_brocantes', error: e.message }); }
@@ -165,11 +185,14 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeSeatALaTable(dateFrom)); }
   catch (e) { errors.push({ source: 'seat_a_la_table', error: e.message }); }
 
-  // Geocode any events missing coordinates using city/postcode
+  // (Geocoding already ran earlier, right after agenda_culturel_71 — see
+  // above. Kept here as a second, cheap pass in case anything from the
+  // remaining sources below also landed without coordinates; a no-op when
+  // there's nothing left to do.)
   try {
     const geocoded = await geocodeMissingEvents();
-    results.push({ source: 'geocoder', found: geocoded, added: geocoded });
-  } catch(e) { errors.push({ source: 'geocoder', error: e.message }); }
+    results.push({ source: 'geocoder_2', found: geocoded, added: geocoded });
+  } catch(e) { errors.push({ source: 'geocoder_2', error: e.message }); }
 
   const total_added = results.reduce((s,r) => s+(r.added||0), 0);
   const total_found = results.reduce((s,r) => s+(r.found||0), 0);
@@ -1452,9 +1475,12 @@ async function expireOldEvents(today) {
 
 // ── Geocode events missing coordinates ───────────────────────────────────
 async function geocodeMissingEvents() {
-  // Get events with no location but have city or postcode
+  // Get events with no location but have city or postcode. Bumped from 100
+  // — destination71 and animation2c both ship city-only (no lat/lng) by
+  // design and rely entirely on this pass, so the real per-run backlog is
+  // bigger now than when this cap was first set.
   const missing = await sbFetch(
-    "events?select=id,city,postcode,address&location=is.null&status=eq.active&limit=100",
+    "events?select=id,city,postcode,address&location=is.null&status=eq.active&limit=250",
     'GET'
   );
   if (!missing || !missing.length) return 0;
@@ -1555,6 +1581,14 @@ function isJunk(title, description) {
 function mapCat(raw) {
   if(!raw) return 'patrimoine';
   const r = raw.toLowerCase();
+
+  // "Balade" alone is too generic to default to nature — A2c's "Balade
+  // enchantée" series is a themed night walk through Givry built around
+  // local history/historical figures (Vigée Le Brun etc.), not a nature
+  // walk, so it needs to be pulled out before the generic \bbalade\b
+  // nature match below would otherwise catch it. Plain "Balade du Mardi"
+  // (actual countryside walks) still falls through to nature as before.
+  if(/balade enchant/.test(r)) return 'patrimoine';
 
   // Must match on WHOLE WORDS or clear phrases to avoid false positives
   if(/\bconcert\b|\bjazz\b|\brock\b|\bchanson\b|\borchestre\b|\bpiano\b|\bchorale\b|\bchoral\b|\bchœur\b|\bchoeur\b|\bchant\b|\bvocal\b|\bvocale\b|\bfado\b|\bblues\b|\bgospel\b|\bopéra\b|\brécital\b|\bfanfare\b|\bharmonie\b|\bphilharmon|\bsymphon|\blyrique\b|\bquatuor\b|\bmusique\b|\bmusical\b|\bmusicale\b|\bbal \b|musique live|soirée musicale/.test(r)) return 'musique';
