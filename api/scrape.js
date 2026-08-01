@@ -1,13 +1,11 @@
-// SoirFR — Full Scraper v5 with verified URLs
-// eTerritoire, AgendaCulturel71 RSS, Infolocale, Brocabrac, calendrier-des-brocantes,
-// Vide-greniers, JDS, Bourgogne Tourisme, OpenAgenda API, Paris Open Data, Ticketmaster
+// SoirFR event scraper. All sources run in one handler on the daily
+// /api/scrape cron. Source order is load-bearing: see insertEvent().
 
 const SB_URL = 'https://ebinsidruxvbzukobshf.supabase.co';
 const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'sb_publishable_QSnlPXEopb6x8m8N3K396Q_YPazJ0IM';
 
-// Central-eastern France: Burgundy + adjacent rural departments
-// Burgundy core (21,71,89,58) + western/northern edges (03,18,45,10,52)
-// + Jura/Franche-Comté (39,25,70) + south toward Lyon (01,69)
+// Burgundy core (21,71,89,58), rural edges (03,18,45,10,52),
+// Jura/Franche-Comté (39,25,70), south toward Lyon (01,69).
 const DEPTS_REGION = ['21','71','89','58','03','18','45','10','52','39','25','70','01','69'];
 // Île-de-France: Paris (75) + petite couronne (92, 93, 94) + grande couronne (77, 78, 91, 95)
 const DEPTS_IDF = ['75','77','78','91','92','93','94','95'];
@@ -54,90 +52,53 @@ module.exports = async function handler(req, res) {
   const dateFrom = new Date().toISOString().split('T')[0];
   const dateTo = new Date(Date.now() + 365 * 86400000).toISOString().split('T')[0];
 
-  // ── 0. Maintenance: expire finished events ─────────────────────────────
-  // An event is over when its end date has passed, or — if it has no end
-  // date — when its start date has passed. Keeps the active table honest;
-  // without this, past events pile up forever (10k+ found in July 2026).
+  // ── 0. Expire finished events ──────────────────────────────────────────
   try {
     const expired = await expireOldEvents(dateFrom);
     results.push({ source: 'expire_maintenance', found: expired, added: 0 });
   } catch (e) { errors.push({ source: 'expire_maintenance', error: e.message }); }
 
-  // ── 1a. Achalon (Office de Tourisme Chalon-sur-Saône) — JSON-LD + tariffs ─
-  // Replaces the old Infolocale scraper, whose hardcoded URL 404s (confirmed
-  // 26 Jul 2026 — infolocale.fr restructured at some point, scraper was
-  // silently returning ~0 real inserts via its regex fallback ever since).
-  // Achalon exposes full schema.org Event JSON-LD AND an embedded tariffs
-  // object with real prices, plus a click-to-reveal phone number — richer
-  // than eterritoire for the same Chalon-sur-Saône area events.
-  //
-  // Runs BEFORE eterritoire on purpose: cross-source duplicates are caught
-  // by the dedup_key unique index (same title+date+location = same row),
-  // and whichever source inserts FIRST wins — the later insert attempt for
-  // the same event just gets silently rejected. Achalon/LeJSL go first so
-  // that when the same event exists on both, soirfr.com links to their
-  // richer page (real price/coordinates) instead of eterritoire's thinner
-  // one. eterritoire still runs afterward for its own unique coverage
-  // (Côte-d'Or, Yonne, Nièvre, Doubs, Jura, Haute-Saône, Belfort — none of
-  // which achalon/LeJSL touch).
+  // Source order is deliberate. Cross-source duplicates are rejected by the
+  // dedup_key unique index, so whichever source inserts first wins the row.
+  // Richer, more local sources therefore run before broad region-wide ones.
+
+  // ── 1a. Achalon (Office de Tourisme Chalon-sur-Saône) ──────────────────
+  // schema.org JSON-LD plus a tariffs object and contact number. Replaces
+  // the old Infolocale scraper, whose URL now 404s.
   try { results.push(await scrapeAchalon(dateFrom)); }
   catch (e) { errors.push({ source: 'achalon', error: e.message }); }
 
-  // ── 1b. Le JSL (Journal de Saône-et-Loire) "PourSortir" agenda ──────────
-  // Department-wide listing pages use full schema.org Event microdata per
-  // card (name, url, description, startDate, theme, city, lat/lng) — no
-  // detail-page visit needed. NOTE: detail pages themselves are client-side
-  // rendered (time/price/organizer load via JS after page load), so those
-  // richer fields are NOT reachable by a plain server-side fetch — only the
-  // listing card fields above are. Good date + real geo-coordinates though,
-  // which is more than most of our other sources give us. Also runs before
-  // eterritoire for the same dedup-priority reason as achalon above.
+  // ── 1b. Le JSL "PourSortir" ────────────────────────────────────────────
+  // Listing cards carry schema.org microdata including lat/lng, so no
+  // detail-page visit is needed.
   try { results.push(await scrapeLejsl(dateFrom)); }
   catch (e) { errors.push({ source: 'lejsl', error: e.message }); }
 
-  // ── 1c. Destination Saône-et-Loire (Route71 / CDT71 tourism board) ─────
-  // Departmental tourism office site — likely underlies several town-level
-  // tourism sites too (autun-tourisme.com references the same Tourinsoft
-  // backend seen here), so one scraper here covers more ground than building
-  // six separate town scrapers. Runs after achalon/lejsl (richer, Chalon-area
-  // specific — should win any dedup_key collision) but before eterritoire
-  // (broader region-wide dump, lowest specificity of the three).
+  // ── 1c. Destination Saône-et-Loire (CDT71) ─────────────────────────────
+  // Departmental tourism board. Shares a Tourinsoft backend with several
+  // town-level tourism sites, so it covers more than a per-town scraper.
   try { results.push(await scrapeDestinationSaoneEtLoire(dateFrom)); }
   catch (e) { errors.push({ source: 'destination71', error: e.message }); }
 
-  // ── 1d. Animation2c (Côte Chalonnaise community association) ───────────
-  // Small, hyper-local, but a REAL structured date field (YYMMDD sort key)
-  // instead of guessed free text — reads a curated Google Sheet, not their
-  // noisy blog. Single fetch, cheap to run every time.
+  // ── 1d. Animation2c (Côte Chalonnaise) ─────────────────────────────────
+  // Hyper-local, but carries a real structured date field. Single fetch.
   try { results.push(await scrapeAnimation2c(dateFrom)); }
   catch (e) { errors.push({ source: 'animation2c', error: e.message }); }
 
-  // ── 2. eTerritoire Bourgogne-Franche-Comté ──────────────────────────────
-  // Confirmed: 4,528 events for dept 71 alone, paginated at /2 /3 etc. Kept
-  // for its region-wide reach beyond Saône-et-Loire — see note above.
+  // ── 2. eTerritoire ─────────────────────────────────────────────────────
+  // Highest volume and widest reach, thinnest data. Runs after the richer
+  // Chalon-area sources above.
   try { results.push(await scrapeETerritoire(dateFrom)); }
   catch (e) { errors.push({ source: 'eterritoire', error: e.message }); }
 
-  // ── 3. Agenda Culturel 71 — RSS feed ───────────────────────────────────
-  // Confirmed RSS format: https://71.agendaculturel.fr/rss/[category]/
+  // ── 3. Agenda Culturel 71 (RSS) ────────────────────────────────────────
   try { results.push(await scrapeAgendaCulturel71(dateFrom)); }
   catch (e) { errors.push({ source: 'agenda_culturel_71', error: e.message }); }
 
-  // Geocode any events missing coordinates using city/postcode — placed
-  // HERE rather than at the very end (where it used to live). It only ran
-  // after 11 other scrapers, several with per-item sleeps (eterritoire's 26
-  // pages, brocabrac/vide-greniers' 14 departments each, etc.), and once
-  // destination71 + animation2c pushed the run's total length up further,
-  // that queued this step behind enough work that it looks like it wasn't
-  // reliably finishing before the function's time budget ran out — real
-  // symptom: Givry events from animation2c (whose rows only ever carry a
-  // city, no lat/lng, same as destination71 and eterritoire) sitting with
-  // location = null days after they were inserted, invisible on the map
-  // even though the row itself was correct. destination71/animation2c/
-  // eterritoire/agenda_culturel_71 (the sources that actually rely on this
-  // fallback rather than shipping their own coordinates) have all run by
-  // this point, so moving the call here — before the slower, sleep-heavy
-  // remaining scrapers — gives it a real chance to complete every run.
+  // Backfill coordinates from city/postcode. Runs here rather than at the
+  // end: every source above ships city-only rows, and the sleep-heavy
+  // scrapers below can exhaust the function's time budget before a trailing
+  // pass would finish. A row with no location never reaches the map.
   try {
     const geocoded = await geocodeMissingEvents();
     results.push({ source: 'geocoder', found: geocoded, added: geocoded });
@@ -147,11 +108,11 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeCalendrierBrocantes(dateFrom)); }
   catch (e) { errors.push({ source: 'calendrier_brocantes', error: e.message }); }
 
-  // ── 5. Brocabrac — 14 rural/regional departments ───────────────────────
+  // ── 5. Brocabrac (all brocante departments) ────────────────────────────
   try { results.push(await scrapeBrocabrac(DEPTS_BROCANTE, dateFrom)); }
   catch (e) { errors.push({ source: 'brocabrac', error: e.message }); }
 
-  // ── 6. Vide-Greniers.org dept 71 ──────────────────────────────────────
+  // ── 6. Vide-Greniers.org ───────────────────────────────────────────────
   try { results.push(await scrapeVideGreniers(dateFrom)); }
   catch (e) { errors.push({ source: 'vide_greniers', error: e.message }); }
 
@@ -159,9 +120,8 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeJDS(dateFrom)); }
   catch (e) { errors.push({ source: 'jds', error: e.message }); }
 
-  // ── 8. Bourgogne Tourisme web — TEMPORARILY DISABLED ──────────────────
-  // Their event pages respond slowly and were consuming the whole run before
-  // OpenAgenda (below) could insert. Re-enable once OpenAgenda is restored.
+  // ── 8. Bourgogne Tourisme — DISABLED ──────────────────────────────────
+  // Detail pages respond slowly enough to consume the whole run.
   // try { results.push(await scrapeBourgogneTourisme(dateFrom)); }
   // catch (e) { errors.push({ source: 'bourgogne_tourisme', error: e.message }); }
 
@@ -185,10 +145,7 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeSeatALaTable(dateFrom)); }
   catch (e) { errors.push({ source: 'seat_a_la_table', error: e.message }); }
 
-  // (Geocoding already ran earlier, right after agenda_culturel_71 — see
-  // above. Kept here as a second, cheap pass in case anything from the
-  // remaining sources below also landed without coordinates; a no-op when
-  // there's nothing left to do.)
+  // Second pass for anything inserted since. No-op when nothing is left.
   try {
     const geocoded = await geocodeMissingEvents();
     results.push({ source: 'geocoder_2', found: geocoded, added: geocoded });
@@ -300,11 +257,9 @@ async function scrapeETerritoire(dateFrom) {
         }
       }
 
-      // Also extract event blocks directly from listing HTML
-      // eTerritoire listing shows: title, date, city, category in each card
-      // Cards show either "Le DD/MM/YYYY" (one day) or "Du DD/MM/YYYY au DD/MM/YYYY"
-      // (exhibitions, festivals). The old regex only matched "Le …", so every
-      // date-range event — including running exhibitions — was silently dropped.
+      // Cards give title, date, city and category. Dates come as either
+      // "Le DD/MM/YYYY" or "Du DD/MM/YYYY au DD/MM/YYYY" (exhibitions,
+      // festivals); both forms must match or every range event is dropped.
       const cards = [...html.matchAll(/href="(\/detail\/([^"]+))"[\s\S]*?<h2[^>]*>([^<]+)<\/h2>[\s\S]*?(?:Le (\d{2}\/\d{2}\/\d{4})|Du (\d{2}\/\d{2}\/\d{4})\s+au (\d{2}\/\d{2}\/\d{4}))/g)];
       const frDate = s => { const p = s.split('/'); return `${p[2]}-${p[1]}-${p[0]}`; };
       for (const card of cards) {
@@ -316,7 +271,7 @@ async function scrapeETerritoire(dateFrom) {
         // Skip only if the event is fully over
         if ((endDate || startDate) < dateFrom) continue;
         found++;
-        // Look up image (may be undefined, that's OK — falls back to null)
+        // Image is optional; falls back to null.
         const imageUrl = imagesByDetail.get(detailPath) || null;
         // The detail URL ends with ",town(postcode)" e.g. ",matour(71520)".
         let city = null, postcode = null, department = '71';
@@ -439,10 +394,8 @@ async function scrapeAgendaCulturel71(dateFrom) {
           imageUrl = 'https://71.agendaculturel.fr' + imageUrl;
         }
 
-        // The RSS <pubDate> is the PUBLICATION date, not the event date — using
-        // it stamped ~100 events with wrong dates (all in the past within weeks).
-        // Parse the real event date out of the title/description text instead;
-        // no parseable date → skip rather than store garbage.
+        // <pubDate> is the publication date, not the event date. Parse the
+        // real one out of the title/description, and skip if there isn't one.
         const startDate = parseFrenchEventDate(`${title} ${desc || ''}`, dateFrom);
         if (!startDate || startDate < dateFrom) continue;
 
@@ -501,14 +454,10 @@ function getXmlText(xml, tag) {
   return m ? m[1].trim() : null;
 }
 
-// ── Infolocale ────────────────────────────────────────────────────────────
 // ── Achalon (Office de Tourisme Chalon-sur-Saône) ──────────────────────────
-// Listing page is a static HTML page linking to /offres/<slug>/ detail pages.
-// Each detail page carries full schema.org Event JSON-LD (name, description,
-// startDate/endDate, location+geo, image) AND a separate embedded tariffs
-// object (real price) plus a click-to-reveal phone number rendered as a
-// data-label attribute — both present in the raw server HTML, confirmed via
-// direct fetch (not JS-injected), so a plain scrape gets all of it.
+// Static listing linking to /offres/<slug>/ detail pages. Each detail page
+// carries schema.org Event JSON-LD, a tariffs object with the real price, and
+// a phone number in a data-label attribute. All of it is in the server HTML.
 async function scrapeAchalon(dateFrom) {
   let found = 0, added = 0;
   const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -566,14 +515,11 @@ async function scrapeAchalon(dateFrom) {
   return { source: 'Achalon', found, added };
 }
 
-// ── Le JSL (Journal de Saône-et-Loire) "PourSortir" agenda ────────────────
-// Department-wide listing (category "Loisir" = all categories combined) —
-// each card is full schema.org Event microdata: name, url, description,
-// startDate (ISO), theme (category tag), addressLocality, lat/lng. All of it
-// is in the raw server HTML (confirmed via fetch), so no detail-page visit
-// is needed for these fields. Detail pages themselves render time/price/
-// organizer client-side via JS after load — NOT visible to a plain fetch —
-// so exact time-of-day and price aren't reachable here; date+city+geo are.
+// ── Le JSL (Journal de Saône-et-Loire) "PourSortir" ───────────────────────
+// Department-wide listing ("Loisir" = all categories). Each card is
+// schema.org Event microdata: name, url, description, startDate, theme,
+// addressLocality, lat/lng, all in the server HTML. Detail pages render
+// time, price and organizer client-side, so those are not reachable.
 async function scrapeLejsl(dateFrom) {
   let found = 0, added = 0;
   const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -627,31 +573,19 @@ async function scrapeLejsl(dateFrom) {
   return { source: 'LeJSL', found, added };
 }
 
-// ── Destination Saône-et-Loire (Route71 / CDT71 tourism board) ────────────
-// Departmental tourism board site (Drupal 10, no schema.org/microdata at all
-// — pure custom HTML: .OfferTeaser cards on the listing, .properties /
-// .location-name / accordion sections on detail pages). Confirmed the same
-// Tourinsoft backend also underlies at least autun-tourisme.com, so this one
-// scraper likely captures most of what individual town tourism-office sites
-// would separately offer.
+// ── Destination Saône-et-Loire (CDT71) ────────────────────────────────────
+// Drupal, no structured data anywhere: .OfferTeaser cards on the listing,
+// .properties / .location-name / accordions on detail pages. Shares its
+// Tourinsoft backend with several town tourism sites, so one scraper here
+// covers what a handful of per-town scrapers would.
 //
-// ~1517 events across ~127 listing pages (11 events/page) — far too many
-// detail-page fetches for a single run, so this only walks the first N
-// listing pages each run; same-source dedup (KNOWN_BY_SOURCE, keyed off
-// slug+date) means a later run naturally advances onto pages it hasn't
-// reached yet without re-processing pages it already has.
+// ~1500 events over ~127 listing pages, too many detail fetches for a single
+// run, so this walks the first MAX_LISTING_PAGES each time. Same-source dedup
+// on slug+date means later runs advance onto pages not yet reached.
 //
-// Dates are the hard part: there's no structured date field anywhere on the
-// page. The "Ouverture" (opening hours) accordion is free text, and its
-// format varies enormously — some events give a clean "MOIS ANNÉE :" header
-// followed by "* Jour DD Mois : ..." or "Jour DD/MM : ..." bullet lines (one
-// bullet per specific date — a curated one-off show, exactly what SoirFR
-// wants); others describe a recurring schedule with exceptions ("tous les
-// mardis du X au Y", "le mercredi à 10h, fermé le..."). Only the first,
-// clean bulleted pattern is parsed into real dates; anything else is SKIPPED
-// rather than guessed — recurring markets/opening-hours listings aren't
-// really "events" for SoirFR's purposes anyway (that's what scrape-markets/
-// scrape-recurring are for), and a wrong guessed date is worse than no event.
+// Dates live in the free-text "Ouverture" accordion, whose format varies
+// widely. Only the clean bulleted form is parsed; recurring schedules are
+// skipped rather than guessed, since a wrong date is worse than no event.
 async function scrapeDestinationSaoneEtLoire(dateFrom) {
   let found = 0, added = 0;
   const BASE = 'https://www.destination-saone-et-loire.fr';
@@ -725,10 +659,9 @@ async function scrapeDestinationSaoneEtLoire(dateFrom) {
   return { source: 'Destination Saône-et-Loire', found, added };
 }
 
-// Parse the "Ouverture" accordion free text into discrete dates. Only trusts
-// the clean pattern: a "MOIS ANNÉE :" header line followed by one or more
-// "* Jour DD Mois[/MM] [: reste]" bullet lines. Anything else (recurring
-// schedules, date ranges, opening-hours exceptions) returns [] — no guessing.
+// Parse the "Ouverture" free text into discrete dates. Only trusts a
+// "MOIS ANNÉE :" header followed by "* Jour DD Mois[/MM]" bullets. Recurring
+// schedules, ranges and opening-hours exceptions all return [].
 function parseDestination71Dates(raw, MONTHS, MONTH_ALT, dateFrom) {
   const text = decodeHtmlEntities(raw).replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '\n');
   const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
@@ -750,16 +683,14 @@ function parseDestination71Dates(raw, MONTHS, MONTH_ALT, dateFrom) {
 
     let year = currentYear || parseInt(dateFrom.slice(0, 4), 10);
     let iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    // No header year pinning this line and the date already passed this year
-    // → it means next year (same year-inference rule used in vision.js).
+    // No header year on this line and the date has passed: assume next year.
     if (!currentYear && iso < dateFrom) {
       year += 1;
       iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     }
-    if (iso < dateFrom) continue; // fully in the past even after inference — skip
+    if (iso < dateFrom) continue; // still past after inference
 
-    // Time — "à 19h", "à 19h30", "de 19h à 0h30". Default to 20:00 (typical
-    // evening show start) when no time is given at all.
+    // "à 19h", "de 19h à 0h30". Default 20:00 when no time is given.
     const rest = bM[4] || '';
     const timeM = rest.match(/(\d{1,2})h(\d{2})?/);
     const hh = timeM ? String(timeM[1]).padStart(2, '0') : '20';
@@ -785,36 +716,30 @@ function titleCaseCity(s) {
     .join('');
 }
 
-// ── Animation2c (Côte Chalonnaise community association) ─────────────────
-// Small local association ("A2c") covering Givry and the surrounding Côte
-// Chalonnaise villages. Their own blog (Blogger) is noisy — newsletter
-// roundups, closure notices — so instead of scraping that, this reads the
-// curated master calendar they maintain as a published Google Sheet (linked
-// from their site's own listing page), pulled as CSV. Unlike destination71,
-// each row carries a REAL structured date: column 1 is a YYMMDD sort key
-// (e.g. "260702" = 2 July 2026) — not something guessed out of free text.
-// Column 4 is then "[Jour] DD Mois [Année] - Commune - Titre - détails...".
-// Small, single-fetch source (~170 rows total covering the whole 2026-2027
-// season) — cheap to run every time, no pagination/budget concerns.
-// NOTE: this is a Google Sheets "publish to web" link — if A2c ever
-// re-publish under a new link this URL 404s and needs updating from
-// https://www.animation2c.fr/p/listing-des-manifestations.html (find the
-// embedded Google Sheets iframe, take its /pub?output=csv variant).
+// ── Animation2c (Côte Chalonnaise) ────────────────────────────────────────
+// Local association covering Givry and the surrounding villages. Their blog
+// is noisy, so this reads the curated master calendar they publish as a
+// Google Sheet, pulled as CSV. Column 0 is a YYMMDD sort key ("260702" =
+// 2 July 2026) and column 3 is "[Jour] DD Mois [Année] - Commune - Titre -
+// détails". ~170 rows covering a whole season, so one fetch, no pagination.
+//
+// The URL below is a Sheets "publish to web" link. If A2c republish, it 404s
+// and needs replacing from the iframe on
+// https://www.animation2c.fr/p/listing-des-manifestations.html (take the
+// /pub?output=csv variant).
 async function scrapeAnimation2c(dateFrom) {
   let found = 0, added = 0;
   const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS6Gj8CAfiEQf3okbFH4oQWh1_E4ol0RGfaNOGcGsCsJBBp66bIk3nf5SriRTdxb4sUgWTtFBT1qJef/pub?output=csv';
   const MONTHS = { janvier:1, 'février':2, fevrier:2, mars:3, avril:4, mai:5, juin:6,
     juillet:7, 'août':8, aout:8, septembre:9, octobre:10, novembre:11, 'décembre':12, decembre:12 };
   const MONTH_ALT = Object.keys(MONTHS).join('|');
-  // Real events always open with a weekday name, "Tout le mois...", or
-  // "Du ... au ...". This also filters out the sheet's own intro/sidebar
-  // text and vague placeholders ("Début février 2027", blank rows) that
-  // share a valid-looking YYMMDD id but aren't a parseable single event.
+  // Real rows open with a weekday, "Tout le mois", or "Du ... au ...". This
+  // also drops the sheet's own intro text and vague placeholders ("Début
+  // février 2027") that carry a valid-looking id but no parseable date.
   const PREFIX_RE = /^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|tout le mois|du\s)/i;
   const WD = 'lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche';
-  // "Du [jour] DD [mois] au [jour] DD mois [année]" — the starting month is
-  // optional in the text ("Du 27 au 29 mars 2026" — only the end carries a
-  // month, meaning the start shares it); the year is optional on either end.
+  // "Du [jour] DD [mois] au [jour] DD mois [année]". The start month is
+  // optional ("Du 27 au 29 mars 2026" shares the end's month), as is the year.
   const RANGE_RE = new RegExp(
     `du\\s+(?:(?:${WD})\\s+)?(\\d{1,2})(?:er)?\\s*(?:(${MONTH_ALT}))?\\s*au\\s+(?:(?:${WD})\\s+)?(\\d{1,2})(?:er)?\\s+(${MONTH_ALT})(?:\\s+(\\d{4}))?`,
     'i'
@@ -839,22 +764,17 @@ async function scrapeAnimation2c(dateFrom) {
     const idIso = `${2000 + yy}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
     found++;
 
-    // Split on "hyphen followed by whitespace" rather than literal " - ":
-    // commune names like "Saint-Denis-de-Vaux" glue their hyphens directly
-    // to letters on both sides (no match), while the sheet's real field
-    // separators always have at least a trailing space — even on the rare
-    // row where the leading space got typo'd away ("2026- Givry").
+    // Split on "hyphen + whitespace", not literal " - ". Commune names like
+    // "Saint-Denis-de-Vaux" have no space around their hyphens, while the
+    // sheet's field separators always carry at least a trailing one.
     const parts = textCol.split(/-\s+/).map(p => p.trim()).filter(Boolean);
     const city = parts[1] ? parts[1] : null;
     const title = (parts[2] || parts[1] || parts[0]).slice(0, 200);
     const description = parts.length > 3 ? parts.slice(3).join(' - ').slice(0, 1000) : null;
 
-    // Start/end date: the id's YYMMDD is right for single-day bullets, but
-    // spot-checking against the live sheet found at least one multi-day
-    // "Du X au Y" row where the id drifted from the text's own stated dates
-    // (an Oenorires listing whose id read 9 Feb while its text said "Du 31
-    // janvier au 7 février") — a human-maintained-sheet slip, not a pattern.
-    // So for range phrasing, trust the text's own start/end over the id.
+    // The id's YYMMDD is reliable for single-day rows, but on "Du X au Y"
+    // rows it can drift from the dates the text itself states. The sheet is
+    // hand-maintained, so for range phrasing the text wins.
     let startIso = idIso, endsAt = null;
     const rangeM = parts[0].match(RANGE_RE);
     if (rangeM) {
@@ -865,14 +785,11 @@ async function scrapeAnimation2c(dateFrom) {
       if (startDay && startMonth) startIso = `${year}-${String(startMonth).padStart(2, '0')}-${String(startDay).padStart(2, '0')}`;
       if (endDay && endMonth) endsAt = `${year}-${String(endMonth).padStart(2, '0')}-${String(endDay).padStart(2, '0')}`;
     }
-    // Skip only if fully over — judge by the end date when there is one,
-    // same convention as the JSON-LD sources above (an exhibition that
-    // started last month but runs into next month is still live).
+    // Skip only if fully over, judging by end date when there is one.
     if ((endsAt || startIso) < dateFrom) continue;
 
-    // Time-of-day, only if actually stated somewhere in the row ("18h00",
-    // "9 h 30") — otherwise leave starts_at date-only (no invented time),
-    // same convention as the agenda_culturel_71 free-text fallback above.
+    // Time of day only if the row states one. Otherwise leave the date bare
+    // rather than invent a start time.
     const timeM = textCol.match(/(\d{1,2})\s?h\s?(\d{2})?\b/i);
     const startsAt = timeM
       ? `${startIso}T${String(timeM[1]).padStart(2, '0')}:${timeM[2] || '00'}:00`
@@ -880,11 +797,9 @@ async function scrapeAnimation2c(dateFrom) {
 
     const ins = await insertEvent({
       title, description, category: mapCat(title),
-      // No department: this curated list isn't strictly Saône-et-Loire —
-      // it includes nearby regional picks too (a Dijon exhibition showed up
-      // in the same sheet), so '71' would mislabel those. City + region are
-      // the honest fields here; geocodeMissingEvents() backfills lat/lng
-      // from city regardless of department being known.
+      // No department: the list carries nearby regional picks too (a Dijon
+      // exhibition appeared in it), so '71' would mislabel them. Geocoding
+      // works off city regardless.
       city, region: 'Bourgogne-Franche-Comté',
       starts_at: startsAt, ends_at: endsAt,
       source_url: 'https://www.animation2c.fr/p/listing-des-manifestations.html',
@@ -896,10 +811,9 @@ async function scrapeAnimation2c(dateFrom) {
   return { source: 'Animation2c', found, added };
 }
 
-// Minimal RFC4180 CSV parser — handles quoted fields with embedded commas,
-// doubled-quote escaping ("" -> "), and embedded newlines (several sheet
-// cells here are genuinely multi-line), none of which a naive text.split
-// on ',' / '\n' can do safely.
+// Minimal RFC4180 CSV parser. Needed because several cells in the sheet
+// contain embedded newlines and doubled-quote escaping, which a split on
+// ',' / '\n' cannot handle.
 function parseCsvRfc4180(t) {
   const rows = [];
   let row = [], field = '', inQuotes = false;
@@ -934,7 +848,7 @@ async function scrapeCalendrierBrocantes(dateFrom) {
     const jsonMatches = html.matchAll(/\[\s*\{[^}]*"url"\s*:[^}]*"lat"\s*:[^}]*\}/gs);
     for (const match of jsonMatches) {
       try {
-        // Clean and parse — may be truncated, extract individual objects
+        // May be truncated; close the array before parsing.
         const jsonStr = match[0].endsWith(']') ? match[0] : match[0] + '}]';
         const events = JSON.parse(jsonStr);
         for (const ev of events) {
@@ -1043,11 +957,9 @@ async function scrapeJsonLdPage(url, dept, region, sourceName, dateFrom) {
 }
 
 // ── Bourgogne Tourisme ─────────────────────────────────────────────────────
-// The agenda listing links to each event's own page (/agenda/<slug>). We grab
-// those links, then read each event page — which carries full, correct
-// structured data INCLUDING its own URL. (The old approach read only the
-// listing page's sparse embedded data, so it returned a few events with no
-// real per-event link, defaulting to the generic agenda page.)
+// The agenda listing links to per-event pages (/agenda/<slug>), which carry
+// full structured data including their own URL. Reading the listing's own
+// sparse data instead gave events with no real per-event link.
 async function scrapeBourgogneTourisme(dateFrom) {
   const BASE = 'https://www.bourgogne-tourisme.com';
   const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
@@ -1077,8 +989,8 @@ async function scrapeBourgogneTourisme(dateFrom) {
       if (!er.ok) continue;
       pages++;
       const ehtml = await er.text();
-      // Reuse the proven JSON-LD reader; baseUrl is the event page itself, so
-      // source_url resolves to the real event page even if the markup omits it.
+      // baseUrl is the event page itself, so source_url resolves even when
+      // the markup omits it.
       const r = await extractJsonLd(ehtml, '21', 'Bourgogne-Franche-Comté', 'bourgogne_tourisme', BASE + path, dateFrom, null);
       found += r.found; added += r.added;
     } catch {}
@@ -1088,10 +1000,8 @@ async function scrapeBourgogneTourisme(dateFrom) {
 }
 
 // ── OpenAgenda API ────────────────────────────────────────────────────────
-// Build a valid public OpenAgenda URL. Events live UNDER their agenda, so the
-// bare /events/<slug> form returns a 403 "not associated to any agenda".
-// OpenAgenda exposes the real URL as `canonicalUrl`; if that's ever missing,
-// rebuild it from the origin agenda. Returns null rather than a dead link.
+// Events live under their agenda, so a bare /events/<slug> URL returns 403.
+// Prefer canonicalUrl, otherwise rebuild from the origin agenda.
 function oaEventUrl(ev) {
   if (ev.canonicalUrl) return ev.canonicalUrl;
   const ag = ev.originAgenda || ev.origin || ev.agenda || null;
@@ -1114,9 +1024,8 @@ async function scrapeOAApi(key, depts, dateFrom, dateTo) {
   }
   let added = 0;
   for (const ev of events) {
-    // OpenAgenda lists every session of a recurring event, oldest first, so
-    // ev.timings[0] is often years in the past. Pick the soonest session that
-    // hasn't finished yet (upcoming or ongoing); skip events with no live one.
+    // OpenAgenda lists every session of a recurring event oldest first, so
+    // timings[0] is often years past. Take the soonest one still running.
     const now = Date.now();
     const t = (Array.isArray(ev.timings) ? ev.timings : [])
       .filter(x => x && x.begin && x.end && new Date(x.end).getTime() >= now)
@@ -1167,9 +1076,8 @@ async function scrapeParisOpenData(dateFrom) {
 
 // ── Ticketmaster ──────────────────────────────────────────────────────────
 async function scrapeTicketmaster(key, dateFrom, dateTo) {
-  // Geo-targeted queries instead of one nationwide list: countryCode=FR sorted
-  // by date returned mostly out-of-coverage events (8 total inserts ever).
-  // One circle over Burgundy/Franche-Comté, one over Île-de-France.
+  // Geo-targeted circles rather than one nationwide list, which returned
+  // mostly out-of-coverage events.
   const ZONES = [
     { latlong: '47.32,4.89', radius: '160' },   // Dijon-centred, covers BFC
     { latlong: '48.85,2.35', radius: '60'  },   // Paris + couronnes
@@ -1214,11 +1122,9 @@ async function scrapeTicketmaster(key, dateFrom, dateTo) {
 }
 
 // ── Seat À La Table (Shopify storefront) ──────────────────────────────────
-// Premium curated French food/wine "Epicurean Adventures" + supper clubs.
-// Uses Shopify's built-in /products.json endpoint for structured data.
-// Map a Seat À La Table region/venue mention to a representative town + coords.
-// Their events always name the region in the title or description, so we scan
-// that text. Most specific (town/château) matches win over broad region names.
+// Curated food and wine experiences, read from Shopify's /products.json.
+// Events name their region in the title or description, so map that text to a
+// representative town and coordinates. Most specific match wins.
 function seatLocation(text) {
   const t = (text || '').toLowerCase();
   const PLACES = [
@@ -1358,8 +1264,7 @@ async function extractJsonLd(html, dept, region, sourceName, baseUrl, dateFrom, 
         const type = String([].concat(item['@type']).join(' '));
         if (!type.includes('Event')) continue;
         found++;
-        // Skip only events that are fully OVER. An exhibition that started last
-        // month but runs until September is live — judge by endDate when present.
+        // Skip only events fully over, judging by endDate when present.
         const liveRef = String(item.endDate || item.startDate || '').slice(0, 10);
         if (liveRef && liveRef < dateFrom) continue;
         const ins = await insertEvent({
@@ -1404,9 +1309,8 @@ async function insertEvent(ev) {
     if (KNOWN_BY_SOURCE[ev.source_name].has(id)) return false;
   }
 
-  // Cross-source duplicates are caught at the database level by the dedup_key
-  // unique index (added during the duplicate cleanup), so no per-event spatial
-  // lookup is needed here — that check was making every new insert ~3x slower.
+  // Cross-source duplicates are rejected by the dedup_key unique index, so no
+  // per-event spatial lookup here. That check made inserts roughly 3x slower.
   const lat=parseFloat(ev.lat), lng=parseFloat(ev.lng);
 
   const loc=(!isNaN(lat)&&!isNaN(lng)&&lat!==0&&lng!==0)?`POINT(${lng} ${lat})`:null;
@@ -1475,10 +1379,9 @@ async function expireOldEvents(today) {
 
 // ── Geocode events missing coordinates ───────────────────────────────────
 async function geocodeMissingEvents() {
-  // Get events with no location but have city or postcode. Bumped from 100
-  // — destination71 and animation2c both ship city-only (no lat/lng) by
-  // design and rely entirely on this pass, so the real per-run backlog is
-  // bigger now than when this cap was first set.
+  // destination71 and animation2c ship city-only rows by design and rely
+  // entirely on this pass, so the per-run backlog is larger than the
+  // original limit of 100 allowed for.
   const missing = await sbFetch(
     "events?select=id,city,postcode,address&location=is.null&status=eq.active&limit=250",
     'GET'
@@ -1491,18 +1394,12 @@ async function geocodeMissingEvents() {
     if (!parts.length) continue;
     const query = parts.join(' ');
 
-    // Two real bugs confirmed by hand against the live API with a stuck
-    // Givry (animation2c) row: (1) appending the literal word "France" —
-    // the old behavior — actively BREAKS matching for short queries; "Givry
-    // France" returns zero results while "Givry" alone or "Givry 71640"
-    // both return a match. The API is France-only anyway, so "France" was
-    // always dead weight and here it was actively harmful. (2) a bare city
-    // name with no postcode/address to anchor it is ambiguous — "Givry"
-    // alone resolves to a same-named hamlet in the Cher, nowhere near the
-    // actual Saône-et-Loire town — so for that bare-city case specifically,
-    // restrict to type=municipality, which correctly returns the real town.
-    // Full address/postcode queries (already precise) skip that restriction
-    // since it could wrongly exclude a valid street/housenumber match.
+    // Two traps in this API. Appending "France" breaks short queries:
+    // "Givry France" returns nothing where "Givry" alone matches, and the
+    // API is France-only anyway. And a bare city name has nothing to anchor
+    // it, so "Givry" resolves to a same-named hamlet in the Cher; restrict
+    // those to type=municipality. Queries that already carry an address or
+    // postcode skip the restriction, which would exclude valid matches.
     const isBareCity = !ev.address && !ev.postcode;
     const url = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=1${isBareCity ? '&type=municipality' : ''}`;
 
@@ -1530,7 +1427,7 @@ async function geocodeMissingEvents() {
         })
       });
       if (res.ok) geocoded++;
-      await sleep(100); // be gentle with the geocoding API
+      await sleep(100); // rate-limit courtesy
     } catch {}
   }
   return geocoded;
@@ -1566,14 +1463,13 @@ function isJunk(title, description) {
     'accompagnement des créateurs', 'secteur du bâtiment',
     'retouche photo', "création d'entreprise",
     // More interim/job patterns
-    "les mercredis de l'intérim", "les mardis de l'intérim",
-    'les mardis du transport', 'les mercredis du transport',
+    "les mardis de l'intérim", 'les mercredis du transport',
     "permanence de l'agence", 'permanence leader',
-    'ras interim', 'kelyps', 'actual interim',
+    'actual interim',
     'forum des métiers', 'forum emploi',
     'immersion professionnelle', 'découvrez nos métiers',
     'matinée découverte métier', 'journée découverte métier',
-    // School internal events  
+    // School internal events
     'au collège ', 'du collège ', 'clg ',
     'réunion parents', 'conseil de classe',
     // Medical/admin
@@ -1595,27 +1491,25 @@ function mapCat(raw) {
   if(!raw) return 'patrimoine';
   const r = raw.toLowerCase();
 
-  // "Balade" alone is too generic to default to nature — A2c's "Balade
-  // enchantée" series is a themed night walk through Givry built around
-  // local history/historical figures (Vigée Le Brun etc.), not a nature
-  // walk, so it needs to be pulled out before the generic \bbalade\b
-  // nature match below would otherwise catch it. Plain "Balade du Mardi"
-  // (actual countryside walks) still falls through to nature as before.
+  // A2c's "Balade enchantée" is a themed night walk through Givry built on
+  // local history, not a nature walk, so it has to be caught before the
+  // generic \bbalade\b match below. Plain "Balade du Mardi" still falls
+  // through to nature.
   if(/balade enchant/.test(r)) return 'patrimoine';
 
-  // Must match on WHOLE WORDS or clear phrases to avoid false positives
+  // Whole words or clear phrases only, to avoid false positives.
   if(/\bconcert\b|\bjazz\b|\brock\b|\bchanson\b|\borchestre\b|\bpiano\b|\bchorale\b|\bchoral\b|\bchœur\b|\bchoeur\b|\bchant\b|\bvocal\b|\bvocale\b|\bfado\b|\bblues\b|\bgospel\b|\bopéra\b|\brécital\b|\bfanfare\b|\bharmonie\b|\bphilharmon|\bsymphon|\blyrique\b|\bquatuor\b|\bmusique\b|\bmusical\b|\bmusicale\b|\bbal \b|musique live|soirée musicale/.test(r)) return 'musique';
   if(/\bcinéma\b|\bciné\b|\bfilm\b|\bprojection\b|\bdocumentaire\b/.test(r)) return 'cinema';
   if(/\bthéâtre\b|\bspectacle\b|\bcomédie\b|\bdanse\b|\bballet\b|\bcirque\b|stand.up|one.man.show|\bimpro\b/.test(r)) return 'theatre';
   if(/\bexposition\b|\bgalerie\b|\bvernissage\b|\bpeinture\b|\bsculpture\b|exposition d|\bmusée\b/.test(r)) return 'expo';
   if(/\benfants?\b|\bjunior\b|\bjeunesse\b|\bconte\b|\bmarionnette\b|jeune public/.test(r)) return 'enfants';
   if(/portes? ouvertes?|visite du domaine|visite de cave|visite guidée/.test(r)) return 'portes-ouvertes';
-  // Degustation: only match wine/food tasting — NOT "cave" alone (too common in addresses)
+  // Wine and food tasting only. "cave" alone is too common in addresses.
   if(/\bdégustation\b|degustation|\boenolog|\bvignoble\b|wine tasting|cave à vin|bar à vin|accord mets|domaine viticole|vendanges|millésime/.test(r)) return 'degustation';
   if(/gastronom|culinaire|\bgourmand\b|\bgourmet\b|\bbanquet\b|\bbrunch\b|food truck|table d.hôte|marché gourmand|repas gastronomique|dîner gastronomique|art culinaire|fête de la gastronomie/.test(r)) return 'gastronomie';
   if(/\bbrocante\b|vide.grenier|vide grenier|\bpuces\b|\bbraderie\b/.test(r)) return 'brocante';
   if(/\bmarché\b|marchés du/.test(r)) return 'marche';
-  // Sport: only clear sports activities, NOT job events with transport/logistics keywords
+  // Clear sporting activity only; job listings carry transport keywords.
   if(/\byoga\b|\bmarathon\b|\btrail\b|\btriathlon\b|\bcyclisme\b|\bnatation\b|\brugby\b|\bbasket\b|\btennis\b|\bfootball\b|\bvolley\b|\bescalade\b|\bkaraté\b|\bjudo\b|tournoi sportif|compétition sportive|\bvélo\b|\bcycliste\b|balade vélo|vélo balade/.test(r)) return 'sport';
   if(/randonnée|\bbalade\b|\bnature\b|\bforêt\b|\bjardin\b|\bbotanique\b|\bfaune\b|\bflore\b|sylvothérapie|sylvo.?thérapie|bain de forêt|forest.?bathing/.test(r)) return 'nature';
   if(/\bfestival\b|\bfête\b|fête de|foire de|\bcarnaval\b|\bkermesse\b/.test(r)) return 'fete';
