@@ -13,14 +13,6 @@
       "schedule": "0 7 * * *"
     },
     {
-      "path": "/api/scrape-markets",
-      "schedule": "0 8 * * 1"
-    },
-    {
-      "path": "/api/scrape-vostickets",
-      "schedule": "0 8 * * 1"
-    },
-    {
       "path": "/api/scrape-recurring",
       "schedule": "0 9 * * 1"
     }
