@@ -118,15 +118,7 @@ module.exports = async function handler(req, res) {
   const authHeader = String(req.headers['authorization'] || '').trim();
   const expected = CRON_SECRET ? `Bearer ${String(CRON_SECRET).trim()}` : null;
 
-  // ── TEMPORARY, REMOVE AFTER THE FIRST REVIEW ─────────────────────────────
-  // CRON_SECRET is a Sensitive variable in Vercel and cannot be read back, so
-  // there is no way to start this by hand. This allows one browser-triggered
-  // run. Delete these three lines and redeploy once the dry run is approved.
-  const MANUAL_TOKEN = 'manual-4d81c7a2';
-  const manualOk = String(req.url || '').includes(`run=${MANUAL_TOKEN}`)
-    || Boolean(req.query && req.query.run === MANUAL_TOKEN);
-
-  if (expected && authHeader !== expected && !manualOk) {
+  if (expected && authHeader !== expected) {
     console.error('[dedupe] auth rejected ' + JSON.stringify({
       has_auth_header: Boolean(req.headers['authorization']),
       cron_schedule_header: req.headers['x-vercel-cron-schedule'] || null,
@@ -452,8 +444,8 @@ async function healthDigest() {
     const outside = await hCount(
       `status=eq.active&starts_at=gte.${today}&department=not.in.(${BFC.join(',')})`
     );
+    // Reported, not flagged: covering a little beyond the region is deliberate.
     out.outside_region = outside;
-    if (outside > 100) issues.push(`${outside} upcoming events are outside Bourgogne-Franche-Comté`);
 
     const creperie = await hCount(
       `source_name=eq.proprietaire&status=eq.active&starts_at=gte.${today}`
@@ -468,7 +460,9 @@ async function healthDigest() {
       issues.push(`Only ${creperie} crêperie date${creperie > 1 ? 's' : ''} left, ask Marie-Antoinette for the next calendar`);
     }
 
-    out.pending_submissions = await hCountTable('pending_events', '');
+    // Only rows actually awaiting a decision. Counting the whole table made
+    // 8 approved and 1 rejected submission look like 9 people waiting.
+    out.pending_submissions = await hCountTable('pending_events', 'status=eq.pending');
     if (out.pending_submissions > 0) {
       issues.push(`${out.pending_submissions} event submission${out.pending_submissions > 1 ? 's' : ''} waiting for review`);
     }
