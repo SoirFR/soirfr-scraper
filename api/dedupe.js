@@ -140,18 +140,27 @@ module.exports = async function handler(req, res) {
   const today = new Date().toISOString().split('T')[0];
 
   // ── load candidates ─────────────────────────────────────────────────────
+  // Supabase caps any single response at 1000 rows, so page through. Without
+  // this the job silently deduplicated only the soonest 1000 events and left
+  // every duplicate beyond that untouched.
+  const PAGE = 1000;
   let events = [];
   try {
-    const r = await fetch(
-      `${SB_URL}/rest/v1/events`
-      + `?select=id,title,starts_at,city,source_name,image_url,description,address,source_url,booking_url`
-      + `&status=eq.active&starts_at=gte.${today}&order=starts_at.asc&limit=20000`,
-      { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
-    );
-    if (!r.ok) {
-      return res.status(200).json({ ok: false, stage: 'load', status: r.status, body: (await r.text()).slice(0, 400) });
+    for (let offset = 0; offset < 20000; offset += PAGE) {
+      const r = await fetch(
+        `${SB_URL}/rest/v1/events`
+        + `?select=id,title,starts_at,city,source_name,image_url,description,address,source_url,booking_url`
+        + `&status=eq.active&starts_at=gte.${today}&order=starts_at.asc,id.asc`
+        + `&limit=${PAGE}&offset=${offset}`,
+        { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
+      );
+      if (!r.ok) {
+        return res.status(200).json({ ok: false, stage: 'load', offset, status: r.status, body: (await r.text()).slice(0, 400) });
+      }
+      const batch = await r.json();
+      events = events.concat(batch);
+      if (batch.length < PAGE) break;
     }
-    events = await r.json();
   } catch (e) {
     return res.status(200).json({ ok: false, stage: 'load', error: e.message });
   }
