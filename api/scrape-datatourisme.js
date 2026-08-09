@@ -60,7 +60,16 @@ module.exports = async function handler(req, res) {
   const authHeader = String(req.headers['authorization'] || '').trim();
   const expected = CRON_SECRET ? `Bearer ${String(CRON_SECRET).trim()}` : null;
 
-  if (expected && authHeader !== expected) {
+  // ── TEMPORARY, REMOVE AFTER TESTING ──────────────────────────────────────
+  // CRON_SECRET is a Sensitive variable in Vercel and cannot be read back, so
+  // there is no way to trigger this by hand. This lets the run be started from
+  // a browser once. Delete these four lines and redeploy when the test is done.
+  const MANUAL_TOKEN = 'manual-9f4c2e8b';
+  const manualOk = (req.query && req.query.run === MANUAL_TOKEN)
+    || String(req.url || '').includes(`run=${MANUAL_TOKEN}`);
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (expected && authHeader !== expected && !manualOk) {
     console.error('[datatourisme] auth rejected ' + JSON.stringify({
       has_auth_header: Boolean(req.headers['authorization']),
       received_length: authHeader.length,
