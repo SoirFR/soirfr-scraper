@@ -9,7 +9,7 @@ const SB_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'sb_publishable_QSnlPXEo
 const DEPTS_REGION = ['21','71','89','58','03','18','45','10','52','39','25','70','01','69'];
 // Île-de-France: Paris (75) + petite couronne (92, 93, 94) + grande couronne (77, 78, 91, 95)
 const DEPTS_IDF = ['75','77','78','91','92','93','94','95'];
-// Depts to scrape for brocantes/vide-greniers (BFC + IdF)
+// Departments covered by the brocante sources (BFC + IdF).
 const DEPTS_BROCANTE = [...DEPTS_REGION, ...DEPTS_IDF];
 
 // Map a dept code to its region name (used to tag events correctly)
@@ -17,18 +17,6 @@ function regionForDept(dept) {
   if (DEPTS_IDF.includes(dept)) return 'Île-de-France';
   return 'Bourgogne-Franche-Comté';
 }
-
-// Mapping from dept code to slugified name used in vide-greniers.org URLs
-const DEPT_VG_SLUG = {
-  '01': '01-Ain', '03': '03-Allier', '10': '10-Aube', '18': '18-Cher',
-  '21': '21-Cote-dOr', '25': '25-Doubs', '39': '39-Jura', '45': '45-Loiret',
-  '52': '52-Haute-Marne', '58': '58-Nievre', '69': '69-Rhone',
-  '70': '70-Haute-Saone', '71': '71-Saone-et-Loire', '89': '89-Yonne',
-  // Île-de-France
-  '75': '75-Paris', '77': '77-Seine-et-Marne', '78': '78-Yvelines',
-  '91': '91-Essonne', '92': '92-Hauts-de-Seine', '93': '93-Seine-Saint-Denis',
-  '94': '94-Val-de-Marne', '95': '95-Val-dOise'
-};
 
 // Per-run cap on NEW inserts so the function always finishes within its time
 // limit. Re-running the scraper (or the nightly cron) backfills the rest.
@@ -112,36 +100,34 @@ module.exports = async function handler(req, res) {
   try { results.push(await scrapeBrocabrac(DEPTS_BROCANTE, dateFrom)); }
   catch (e) { errors.push({ source: 'brocabrac', error: e.message }); }
 
-  // ── 6. Vide-Greniers.org ───────────────────────────────────────────────
-  try { results.push(await scrapeVideGreniers(dateFrom)); }
-  catch (e) { errors.push({ source: 'vide_greniers', error: e.message }); }
+  // vide-greniers.org was removed: its robots.txt disallows crawling.
 
-  // ── 7. JDS Saône-et-Loire (JSON-LD) ───────────────────────────────────
+  // ── 6. JDS Saône-et-Loire (JSON-LD) ───────────────────────────────────
   try { results.push(await scrapeJDS(dateFrom)); }
   catch (e) { errors.push({ source: 'jds', error: e.message }); }
 
-  // ── 8. Bourgogne Tourisme — DISABLED ──────────────────────────────────
+  // ── 7. Bourgogne Tourisme — DISABLED ──────────────────────────────────
   // Detail pages respond slowly enough to consume the whole run.
   // try { results.push(await scrapeBourgogneTourisme(dateFrom)); }
   // catch (e) { errors.push({ source: 'bourgogne_tourisme', error: e.message }); }
 
-  // ── 9. OpenAgenda API — 14 rural/regional departments ─────────────────
+  // ── 8. OpenAgenda API — 14 rural/regional departments ─────────────────
   if (OA_KEY) {
     try { results.push(await scrapeOAApi(OA_KEY, DEPTS_REGION, dateFrom, dateTo)); }
     catch (e) { errors.push({ source: 'oa_api', error: e.message }); }
   }
 
-  // ── 10. Paris Open Data — DISABLED (too random, off-brand for now) ────
+  // ── 9. Paris Open Data — DISABLED (too random, off-brand for now) ─────
   // try { results.push(await scrapeParisOpenData(dateFrom)); }
   // catch (e) { errors.push({ source: 'paris', error: e.message }); }
 
-  // ── 11. Ticketmaster France ───────────────────────────────────────────
+  // ── 10. Ticketmaster France ──────────────────────────────────────────
   if (TM_KEY) {
     try { results.push(await scrapeTicketmaster(TM_KEY, dateFrom, dateTo)); }
     catch (e) { errors.push({ source: 'ticketmaster', error: e.message }); }
   }
 
-  // ── 12. Seat À La Table — premium curated French food/wine experiences ─
+  // ── 11. Seat À La Table — curated French food/wine experiences ────────
   try { results.push(await scrapeSeatALaTable(dateFrom)); }
   catch (e) { errors.push({ source: 'seat_a_la_table', error: e.message }); }
 
@@ -154,12 +140,31 @@ module.exports = async function handler(req, res) {
   const total_added = results.reduce((s,r) => s+(r.added||0), 0);
   const total_found = results.reduce((s,r) => s+(r.found||0), 0);
 
-  await sbFetch('scrape_logs', 'POST', {
-    source_name: 'all_v5', finished_at: new Date().toISOString(),
-    events_found: total_found, events_added: total_added,
-    status: errors.length === 0 ? 'success' : 'partial',
-    error_message: errors.length ? JSON.stringify(errors.slice(0,10)) : null,
-  });
+  // One row per source alongside the run total. Without the per-source rows
+  // there is no way to tell a source that fetched nothing (found 0) from one
+  // that parsed fine but could not insert (found > 0, added 0). A source that
+  // never ran leaves no row, which marks where a timed-out run stopped.
+  const finishedAt = new Date().toISOString();
+  await sbFetch('scrape_logs', 'POST', [
+    {
+      source_name: 'all_v5', finished_at: finishedAt,
+      events_found: total_found, events_added: total_added,
+      status: errors.length === 0 ? 'success' : 'partial',
+      error_message: errors.length ? JSON.stringify(errors.slice(0,10)) : null,
+    },
+    ...results.map(r => ({
+      source_name: String(r.source || 'unknown').slice(0, 100),
+      finished_at: finishedAt,
+      events_found: r.found || 0, events_added: r.added || 0,
+      status: 'success', error_message: null,
+    })),
+    ...errors.map(e => ({
+      source_name: String(e.source || 'unknown').slice(0, 100),
+      finished_at: finishedAt,
+      events_found: 0, events_added: 0,
+      status: 'error', error_message: String(e.error || '').slice(0, 500),
+    })),
+  ]);
 
   return res.status(200).json({ success: true, total_added, total_found, results, errors });
 };
@@ -725,7 +730,7 @@ function titleCaseCity(s) {
 //
 // The URL below is a Sheets "publish to web" link. If A2c republish, it 404s
 // and needs replacing from the iframe on
-// https://www.animation2c.fr/p/reservations.html (take the
+// https://www.animation2c.fr/p/listing-des-manifestations.html (take the
 // /pub?output=csv variant).
 async function scrapeAnimation2c(dateFrom) {
   let found = 0, added = 0;
@@ -802,7 +807,7 @@ async function scrapeAnimation2c(dateFrom) {
       // works off city regardless.
       city, region: 'Bourgogne-Franche-Comté',
       starts_at: startsAt, ends_at: endsAt,
-      source_url: 'https://www.animation2c.fr/p/listing-des-manifestations.html',
+      source_url: 'https://www.animation2c.fr/p/reservations.html',
       source_event_id: `${idCol}-${seqCol}`,
       source_name: 'animation2c',
     });
@@ -902,25 +907,6 @@ async function scrapeBrocabrac(depts, dateFrom) {
     await sleep(600);
   }
   return { source: 'Brocabrac', found, added };
-}
-
-// ── Vide-Greniers.org ─────────────────────────────────────────────────────
-async function scrapeVideGreniers(dateFrom) {
-  let added = 0, found = 0;
-  for (const dept of DEPTS_BROCANTE) {
-    const slug = DEPT_VG_SLUG[dept];
-    if (!slug) continue;
-    const url = `https://www.vide-greniers.org/${slug}.htm`;
-    try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'SoirFR/1.0' } });
-      if (!res.ok) continue;
-      const html = await res.text();
-      const r = await extractJsonLd(html, dept, 'France', 'vide_greniers', url, dateFrom, 'brocante');
-      found += r.found; added += r.added;
-    } catch {}
-    await sleep(500);
-  }
-  return { source: 'Vide-Greniers.org', found, added };
 }
 
 // ── JDS Saône-et-Loire ────────────────────────────────────────────────────
