@@ -725,7 +725,7 @@ function titleCaseCity(s) {
 //
 // The URL below is a Sheets "publish to web" link. If A2c republish, it 404s
 // and needs replacing from the iframe on
-// https://www.animation2c.fr/p/listing-des-manifestations.html (take the
+// https://www.animation2c.fr/p/reservations.html (take the
 // /pub?output=csv variant).
 async function scrapeAnimation2c(dateFrom) {
   let found = 0, added = 0;
