@@ -255,7 +255,7 @@ function mapPoi(o, today) {
   return {
     title: String(title).slice(0, 500),
     description,
-    category: mapCat(`${title} ${description || ''} ${(o.type || []).join(' ')}`),
+    category: pickCategory(title, description, o.type),
     address: Array.isArray(addr.streetAddress) ? addr.streetAddress[0] : (addr.streetAddress || null),
     city: addr.addressLocality || null,
     postcode,
@@ -263,7 +263,9 @@ function mapPoi(o, today) {
     region: 'Bourgogne-Franche-Comté',
     country: 'FR',
     location,
-    starts_at: timing.startTime ? `${timing.startDate}T${pad(timing.startTime)}` : timing.startDate,
+    starts_at: timing.startTime
+      ? `${timing.startDate}T${pad(timing.startTime)}${parisOffset(timing.startDate)}`
+      : timing.startDate,
     ends_at: timing.endDate || null,
     image_url: firstImage(o.hasMainRepresentation),
     price_min: price,
@@ -283,6 +285,22 @@ function pickLang(v) {
   if (!v) return null;
   if (typeof v === 'string') return v;
   return v['@fr'] || v['@en'] || Object.values(v)[0] || null;
+}
+
+// FIX 8: DATAtourisme publishes local wall-clock times. Storing "18:00" bare
+// makes Postgres read it as UTC, which showed every event two hours late in
+// summer. Europe/Paris is UTC+2 from the last Sunday of March to the last
+// Sunday of October, UTC+1 otherwise.
+function parisOffset(dateStr) {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  const y = d.getUTCFullYear();
+  const lastSunday = (year, month) => {
+    const last = new Date(Date.UTC(year, month + 1, 0));
+    return new Date(Date.UTC(year, month, last.getUTCDate() - last.getUTCDay()));
+  };
+  const start = lastSunday(y, 2);   // March
+  const end = lastSunday(y, 9);     // October
+  return (d >= start && d < end) ? '+02:00' : '+01:00';
 }
 
 function pad(t) {
@@ -360,6 +378,17 @@ function isJunk(title, description) {
 // was 'patrimoine', which is why that bucket became a dumping ground.
 // NOTE: 'patrimoine' still needs a row in the categories table for the site
 // filter chip to appear.
+// FIX 9: the title decides the category. Reading title and description as one
+// blob let a word in the body text win: "A2C - Balade du mardi", whose
+// description mentions "dégustation au retour", was filed under dégustations
+// instead of nature. Only fall back to the description when the title says
+// nothing useful.
+function pickCategory(title, description, types) {
+  const fromTitle = mapCat(title);
+  if (fromTitle !== 'autre') return fromTitle;
+  return mapCat(`${title} ${description || ''} ${(types || []).join(' ')}`);
+}
+
 function mapCat(raw) {
   if (!raw) return 'autre';
   const r = raw.toLowerCase();
