@@ -51,7 +51,25 @@ module.exports = async function handler(req, res) {
   const CRON_SECRET = process.env.CRON_SECRET;
   const DT_KEY = process.env.DATATOURISME_API_KEY;
 
-  if (CRON_SECRET && req.headers['authorization'] !== `Bearer ${CRON_SECRET}`) {
+  // FIX 7: the guard rejected the request before the API key was ever used,
+  // and said nothing about why. Two changes:
+  //   - both sides are trimmed, because a secret pasted with a trailing
+  //     newline never matches and looks identical in the dashboard
+  //   - a rejection now logs enough to tell a real cron invocation apart from
+  //     an unauthenticated poke, without ever printing the secret itself
+  const authHeader = String(req.headers['authorization'] || '').trim();
+  const expected = CRON_SECRET ? `Bearer ${String(CRON_SECRET).trim()}` : null;
+
+  if (expected && authHeader !== expected) {
+    console.error('[datatourisme] auth rejected ' + JSON.stringify({
+      has_auth_header: Boolean(req.headers['authorization']),
+      received_length: authHeader.length,
+      expected_length: expected.length,
+      // Present on every genuine Vercel cron invocation. If this is null, the
+      // request did not come from the scheduler.
+      cron_schedule_header: req.headers['x-vercel-cron-schedule'] || null,
+      user_agent: req.headers['user-agent'] || null,
+    }));
     return res.status(401).json({ error: 'Unauthorized' });
   }
   if (!DT_KEY) return res.status(500).json({ error: 'No DATATOURISME_API_KEY' });
