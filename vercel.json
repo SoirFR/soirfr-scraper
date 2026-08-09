@@ -13,6 +13,10 @@
       "schedule": "0 7 * * *"
     },
     {
+      "path": "/api/dedupe",
+      "schedule": "0 8 * * *"
+    },
+    {
       "path": "/api/scrape-recurring",
       "schedule": "0 9 * * 1"
     }
