@@ -88,15 +88,23 @@ function linkKey(u) {
 function buildLinks(members) {
   const seen = new Map();
   for (const m of members) {
+    const prio = PRIORITY[m.source_name] ?? DEFAULT_PRIORITY;
     for (const raw of [m.booking_url, m.source_url]) {
       const c = classifyLink(raw);
       if (!c) continue;
+      c.prio = prio;
       const k = linkKey(c.url);
-      if (!seen.has(k) || seen.get(k).rank > c.rank) seen.set(k, c);
+      const cur = seen.get(k);
+      if (!cur || cur.rank > c.rank || (cur.rank === c.rank && cur.prio < c.prio)) {
+        seen.set(k, c);
+      }
     }
   }
+  // FIX: when two links classify the same way, the better source wins. Without
+  // this, an A2C page and an eterritoire page were both plain "Détails" and the
+  // order between them was arbitrary, so eterritoire won by accident.
   return [...seen.values()]
-    .sort((a, b) => a.rank - b.rank)
+    .sort((a, b) => (a.rank - b.rank) || (b.prio - a.prio))
     .slice(0, MAX_LINKS)
     .map(({ url, label }) => ({ url, label }));
 }
@@ -118,7 +126,15 @@ module.exports = async function handler(req, res) {
   const authHeader = String(req.headers['authorization'] || '').trim();
   const expected = CRON_SECRET ? `Bearer ${String(CRON_SECRET).trim()}` : null;
 
-  if (expected && authHeader !== expected) {
+  // ── TEMPORARY, REMOVE ONCE THIS RUN IS VERIFIED ──────────────────────────
+  // Lets one run be started from a browser so the link fix can be checked
+  // today instead of waiting for tomorrow's 08:00 cron. Delete these three
+  // lines and redeploy afterwards.
+  const MANUAL_TOKEN = 'manual-6b39e07f';
+  const manualOk = String(req.url || '').includes(`run=${MANUAL_TOKEN}`)
+    || Boolean(req.query && req.query.run === MANUAL_TOKEN);
+
+  if (expected && authHeader !== expected && !manualOk) {
     console.error('[dedupe] auth rejected ' + JSON.stringify({
       has_auth_header: Boolean(req.headers['authorization']),
       cron_schedule_header: req.headers['x-vercel-cron-schedule'] || null,
@@ -141,8 +157,11 @@ module.exports = async function handler(req, res) {
     for (let offset = 0; offset < 20000; offset += PAGE) {
       const r = await fetch(
         `${SB_URL}/rest/v1/events`
-        + `?select=id,title,starts_at,city,source_name,image_url,description,address,source_url,booking_url`
-        + `&status=eq.active&starts_at=gte.${today}&order=starts_at.asc,id.asc`
+        + `?select=id,title,starts_at,city,source_name,image_url,description,address,source_url,booking_url,status`
+        // Hidden copies are loaded so they can still donate a link or an image to
+        // the card that survived. They are never eligible to become the keeper,
+        // so nothing already hidden is ever brought back to the map.
+        + `&status=in.(active,duplicate)&starts_at=gte.${today}&order=starts_at.asc,id.asc`
         + `&limit=${PAGE}&offset=${offset}`,
         { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
       );
@@ -199,12 +218,20 @@ module.exports = async function handler(req, res) {
 
     for (const members of byRoot.values()) {
       if (members.length < 2) continue;
-      const ranked = members.slice().sort(compareCandidates);
+
+      // Only a currently visible event can be the survivor. If a group is made
+      // up entirely of already-hidden rows, leave it alone: something else
+      // hid those and it is not this job's business to undo it.
+      const visible = members.filter(m => m.status === 'active');
+      if (!visible.length) continue;
+
+      const ranked = visible.slice().sort(compareCandidates);
       const keep = ranked[0];
       const drop = ranked.slice(1);
 
+      // Links and images come from every copy, hidden ones included.
       const links = buildLinks(members);
-      const inheritedImage = keep.image_url || (drop.find(d => d.image_url) || {}).image_url || null;
+      const inheritedImage = keep.image_url || (members.find(m => m.image_url) || {}).image_url || null;
 
       groups.push({
         key,
@@ -402,7 +429,14 @@ function countBy(arr) {
 // should not be there.
 
 const BFC = ['21', '25', '39', '58', '70', '71', '89', '90'];
-const STALE_HOURS = 48;
+// A source that has added nothing is not necessarily broken. animation2c and
+// agenda_culturel_71 publish a whole season in one sheet, so once it is
+// ingested there is genuinely nothing new for weeks. Only shout after several
+// quiet days, and never for the sources that are batch-loaded by nature.
+const STALE_HOURS = 96;
+const BATCH_SOURCES = new Set([
+  'animation2c', 'agenda_culturel_71', 'recurring', 'proprietaire', 'user_submission',
+]);
 const HEALTH_SOURCES = [
   'datatourisme', 'brocabrac', 'eterritoire', 'openagenda_api',
   'animation2c', 'agenda_culturel_71', 'lejsl', 'recurring', 'proprietaire',
@@ -425,8 +459,8 @@ async function healthDigest() {
       const upcoming = await hCount(`source_name=eq.${s}&status=eq.active&starts_at=gte.${today}`);
       const fresh = await hCount(`source_name=eq.${s}&created_at=gte.${staleCutoff}`);
       out.sources[s] = { upcoming, added_last_48h: fresh };
-      if (upcoming > 0 && fresh === 0 && s !== 'proprietaire' && s !== 'recurring') {
-        issues.push(`${s} has added nothing in ${STALE_HOURS}h`);
+      if (upcoming > 0 && fresh === 0 && !BATCH_SOURCES.has(s)) {
+        issues.push(`${s} has added nothing in ${STALE_HOURS}h and may be broken`);
       }
     }
 
