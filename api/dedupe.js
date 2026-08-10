@@ -408,7 +408,27 @@ module.exports = async function handler(req, res) {
     gained: g.gained_from,
   }));
 
-  return res.status(200).json({ ...summary, sample });
+  // Rebuild the static place pages so they carry tonight's events. Only after
+  // a real apply run, never on a dry run and never on ?report=1, which returns
+  // long before this. A failed rebuild must not fail the merge, but it must
+  // never be silent either: the outcome goes in the response and the log.
+  let rebuild = null;
+  if (apply) {
+    const hook = process.env.FRONTEND_DEPLOY_HOOK;
+    if (!hook) {
+      rebuild = 'skipped: FRONTEND_DEPLOY_HOOK is not set';
+    } else {
+      try {
+        const r = await fetch(hook, { method: 'POST' });
+        rebuild = r.ok ? 'triggered' : `failed: HTTP ${r.status}`;
+      } catch (e) {
+        rebuild = 'failed: ' + e.message;
+      }
+    }
+    console.log('[dedupe] frontend rebuild ' + rebuild);
+  }
+
+  return res.status(200).json({ ...summary, rebuild, sample });
 };
 
 // ── matching ──────────────────────────────────────────────────────────────
