@@ -1305,7 +1305,7 @@ async function insertEvent(ev) {
     category: ev.category||'autre', address: ev.address||null,
     city: ev.city||null, postcode: ev.postcode||null,
     department: ev.department||null, region: ev.region||null, country: ev.country||'FR',
-    location: loc, starts_at: ev.starts_at, ends_at: ev.ends_at||null,
+    location: loc, starts_at: asParisTime(ev.starts_at), ends_at: asParisTime(ev.ends_at),
     image_url: ev.image_url||null, price_min: ev.price_min??null,
     is_free: ev.is_free||false, booking_url: ev.booking_url||null,
     source_type: 'scraper', source_name: ev.source_name,
@@ -1320,6 +1320,35 @@ async function insertEvent(ev) {
     }
   }
   return _inserted;
+}
+
+// ── Local time, stored correctly ──────────────────────────────────────────
+// Every source here publishes wall-clock times for Bourgogne, but a bare
+// "2026-08-11T18:00" handed to Postgres is read as UTC, which put every event
+// two hours late in summer. Date-only values had the same problem in reverse:
+// they landed at 02:00 the same morning instead of midnight.
+//
+// This stamps the Paris offset on anything that has no timezone of its own.
+// Values that already carry Z or an offset (Ticketmaster, OpenAgenda) are
+// left exactly as they are.
+function parisOffset(dateStr) {
+  const d = new Date(`${dateStr}T12:00:00Z`);
+  const y = d.getUTCFullYear();
+  const lastSunday = (year, month) => {
+    const last = new Date(Date.UTC(year, month + 1, 0));
+    return new Date(Date.UTC(year, month, last.getUTCDate() - last.getUTCDay()));
+  };
+  return (d >= lastSunday(y, 2) && d < lastSunday(y, 9)) ? '+02:00' : '+01:00';
+}
+
+function asParisTime(value) {
+  if (!value) return null;
+  const v = String(value).trim();
+  const m = v.match(/^(\d{4}-\d{2}-\d{2})(?:[T ](\d{2}:\d{2})(:\d{2})?)?$/);
+  if (!m) return value;                    // already has a zone, or not a date
+  const day = m[1];
+  const time = m[2] ? `${m[2]}${m[3] || ':00'}` : '00:00:00';
+  return `${day}T${time}${parisOffset(day)}`;
 }
 
 async function sbFetch(path,method='GET',body=null) {
