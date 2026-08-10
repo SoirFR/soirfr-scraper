@@ -13,7 +13,7 @@
       "schedule": "0 7 * * *"
     },
     {
-      "path": "/api/dedupe",
+      "path": "/api/dedupe?apply=1",
       "schedule": "0 8 * * *"
     },
     {
