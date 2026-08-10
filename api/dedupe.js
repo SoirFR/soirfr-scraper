@@ -47,6 +47,7 @@ const TITLE_THRESHOLD = 0.6;   // share of the shorter title's words that must m
 const TIME_TOLERANCE_MIN = 30; // minutes
 const TIME_TITLE_FLOOR = 0.25; // titles must at least partly rhyme for the time rule
 const MAX_LINKS = 3;
+const VAGUE_CATEGORIES = new Set(['autre', 'patrimoine']);
 
 // ── link classification ───────────────────────────────────────────────────
 // Rank 1 first. A URL cannot tell you whether a page is useful, so this only
@@ -109,6 +110,70 @@ function buildLinks(members) {
     .map(({ url, label }) => ({ url, label }));
 }
 
+// ── field-level merge ─────────────────────────────────────────────────────
+// The survivor keeps its own title and coordinates. Everything else is taken
+// from whichever copy has the best version of it, best source first.
+//
+// Deliberately NOT merged: title (assembling one from pieces produces
+// gibberish) and location (coordinates are part of the database's dedup_key,
+// so changing them can collide with another row). DataTourisme wins the
+// priority ranking and is geocoded 100% of the time, so the survivor's pin is
+// already the best available.
+function mergeFields(members, keep) {
+  const ranked = members.slice().sort(
+    (a, b) => (PRIORITY[b.source_name] ?? DEFAULT_PRIORITY) - (PRIORITY[a.source_name] ?? DEFAULT_PRIORITY)
+  );
+  const patch = {};
+  const from = {};
+
+  const firstWith = test => ranked.find(m => m !== keep && test(m));
+
+  // Photo: any copy that has one.
+  if (!keep.image_url) {
+    const donor = firstWith(m => m.image_url);
+    if (donor) { patch.image_url = donor.image_url; from.image_url = donor.source_name; }
+  }
+
+  // A real start time beats midnight, but only from the same calendar day, so
+  // the dedup_key's date component cannot shift.
+  if (timeOfDay(keep.starts_at) === null) {
+    const day = String(keep.starts_at).slice(0, 10);
+    const donor = firstWith(m => timeOfDay(m.starts_at) !== null && String(m.starts_at).slice(0, 10) === day);
+    if (donor) { patch.starts_at = donor.starts_at; from.starts_at = donor.source_name; }
+  }
+
+  if (!keep.ends_at) {
+    const donor = firstWith(m => m.ends_at);
+    if (donor) { patch.ends_at = donor.ends_at; from.ends_at = donor.source_name; }
+  }
+
+  // Fullest description, but only if it is meaningfully fuller. A marginally
+  // longer one is usually the same text with boilerplate attached.
+  {
+    const cur = (keep.description || '').length;
+    const donor = ranked
+      .filter(m => m !== keep && m.description)
+      .sort((a, b) => b.description.length - a.description.length)[0];
+    if (donor && donor.description.length > Math.max(cur * 1.25, cur + 80)) {
+      patch.description = donor.description.slice(0, 1000);
+      from.description = donor.source_name;
+    }
+  }
+
+  if (!keep.address) {
+    const donor = firstWith(m => m.address);
+    if (donor) { patch.address = donor.address; from.address = donor.source_name; }
+  }
+
+  // Anything specific beats the two catch-all buckets.
+  if (VAGUE_CATEGORIES.has(keep.category)) {
+    const donor = firstWith(m => m.category && !VAGUE_CATEGORIES.has(m.category));
+    if (donor) { patch.category = donor.category; from.category = donor.source_name; }
+  }
+
+  return { patch, from };
+}
+
 module.exports = async function handler(req, res) {
   if (!SB_KEY) return res.status(500).json({ error: 'No SUPABASE_SERVICE_ROLE_KEY' });
 
@@ -149,7 +214,7 @@ module.exports = async function handler(req, res) {
     for (let offset = 0; offset < 20000; offset += PAGE) {
       const r = await fetch(
         `${SB_URL}/rest/v1/events`
-        + `?select=id,title,starts_at,city,source_name,image_url,description,address,source_url,booking_url,status`
+        + `?select=id,title,starts_at,ends_at,city,source_name,image_url,description,address,category,price_min,is_free,source_url,booking_url,status`
         // Hidden copies are loaded so they can still donate a link or an image to
         // the card that survived. They are never eligible to become the keeper,
         // so nothing already hidden is ever brought back to the map.
@@ -223,7 +288,7 @@ module.exports = async function handler(req, res) {
 
       // Links and images come from every copy, hidden ones included.
       const links = buildLinks(members);
-      const inheritedImage = keep.image_url || (members.find(m => m.image_url) || {}).image_url || null;
+      const { patch: fieldPatch, from: fieldFrom } = mergeFields(members, keep);
 
       groups.push({
         key,
@@ -233,10 +298,11 @@ module.exports = async function handler(req, res) {
         starts_at: keep.starts_at,
         merged_from: drop.map(d => d.source_name),
         links,
-        gains_image: !keep.image_url && Boolean(inheritedImage),
+        gained: Object.keys(fieldFrom),
+        gained_from: fieldFrom,
         _keep: keep,
         _drop: drop,
-        _image: inheritedImage,
+        _patch: fieldPatch,
       });
     }
   }
@@ -251,8 +317,7 @@ module.exports = async function handler(req, res) {
     // Enrich the survivors first. If this half fails we want the copies still
     // visible rather than a merged record that lost its links.
     for (const g of groups) {
-      const patch = { links: g.links, updated_at: new Date().toISOString() };
-      if (!g._keep.image_url && g._image) patch.image_url = g._image;
+      const patch = { ...g._patch, links: g.links, updated_at: new Date().toISOString() };
       if (g.links[0]) patch.source_url = g.links[0].url;
       const booking = g.links.find(l => l.label === 'Réserver');
       if (booking) patch.booking_url = booking.url;
@@ -324,7 +389,7 @@ module.exports = async function handler(req, res) {
     groups_found: groups.length,
     copies_to_hide: dropIds.length,
     survivors_with_multiple_links: groups.filter(g => g.links.length > 1).length,
-    survivors_gaining_an_image: groups.filter(g => g.gains_image).length,
+    fields_gained: groups.flatMap(g => g.gained).reduce((acc, f) => (acc[f] = (acc[f] || 0) + 1, acc), {}),
     enriched,
     hidden,
     kept_by_source: countBy(groups.map(g => g.keep_source)),
@@ -340,7 +405,7 @@ module.exports = async function handler(req, res) {
     keep: g.keep_source,
     merged_from: g.merged_from,
     links: g.links,
-    gains_image: g.gains_image,
+    gained: g.gained_from,
   }));
 
   return res.status(200).json({ ...summary, sample });
