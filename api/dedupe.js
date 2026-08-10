@@ -126,15 +126,7 @@ module.exports = async function handler(req, res) {
   const authHeader = String(req.headers['authorization'] || '').trim();
   const expected = CRON_SECRET ? `Bearer ${String(CRON_SECRET).trim()}` : null;
 
-  // ── TEMPORARY, REMOVE ONCE THIS RUN IS VERIFIED ──────────────────────────
-  // Lets one run be started from a browser so the link fix can be checked
-  // today instead of waiting for tomorrow's 08:00 cron. Delete these three
-  // lines and redeploy afterwards.
-  const MANUAL_TOKEN = 'manual-6b39e07f';
-  const manualOk = String(req.url || '').includes(`run=${MANUAL_TOKEN}`)
-    || Boolean(req.query && req.query.run === MANUAL_TOKEN);
-
-  if (expected && authHeader !== expected && !manualOk) {
+  if (expected && authHeader !== expected) {
     console.error('[dedupe] auth rejected ' + JSON.stringify({
       has_auth_header: Boolean(req.headers['authorization']),
       cron_schedule_header: req.headers['x-vercel-cron-schedule'] || null,
