@@ -1,0 +1,1561 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<script defer src="/_vercel/insights/script.js"></script>
+<link rel="icon" href="/favicon.ico?v=3" sizes="32x32">
+<link rel="icon" href="/favicon.svg?v=3" type="image/svg+xml">
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=3">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="google-site-verification" content="JPSp4dXPggkZhHOT1pjWFS8vQVYcJC0YkRHaWDwnd-Y" />
+<title>SoirFR — Agenda Local. Culture & Événements.</title>
+
+<!-- Open Graph / Link Preview -->
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://www.soirfr.com/">
+<meta property="og:title" content="SoirFR — Agenda Local">
+<meta property="og:description" content="Tous les événements culturels près de chez vous sur une carte : concerts, brocantes, marchés, expos, dégustations, festivals, patrimoine. Events & Activities across Burgundy.">
+<meta property="og:image" content="https://www.soirfr.com/preview.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="fr_FR">
+<meta property="og:site_name" content="SoirFR">
+
+<!-- Twitter Card -->
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="SoirFR — Agenda Local">
+<meta name="twitter:description" content="Tous les événements culturels près de chez vous sur une carte : concerts, brocantes, marchés, expos, festivals. Events & Activities across Burgundy.">
+<meta name="twitter:image" content="https://www.soirfr.com/preview.jpg">
+
+<!-- General -->
+<meta name="description" content="SoirFR est l'agenda local des événements culturels près de chez vous : concerts, brocantes, marchés, expositions, dégustations, festivals, fêtes locales et patrimoine. Une carte interactive mise à jour quotidiennement. Events & Activities across Burgundy.">
+<meta name="robots" content="index, follow">
+<meta name="author" content="SoirFR">
+<link rel="canonical" href="https://www.soirfr.com/">
+
+<!-- Structured data: Local agenda/events directory -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "name": "SoirFR",
+  "alternateName": "SoirFR — Agenda Local",
+  "url": "https://www.soirfr.com/",
+  "description": "Agenda local des événements culturels en Bourgogne et Saône-et-Loire",
+  "inLanguage": "fr-FR",
+  "publisher": {
+    "@type": "Organization",
+    "name": "SoirFR",
+    "url": "https://www.soirfr.com/"
+  },
+  "potentialAction": {
+    "@type": "SearchAction",
+    "target": "https://www.soirfr.com/?q={search_term_string}",
+    "query-input": "required name=search_term_string"
+  }
+}
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600;700;800;900&family=Barlow:ital,wght@0,300;0,400;0,500;1,300&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<style>
+:root{
+  --cream:#F0EAD8;--ink:#111009;--rouge:#C2321F;--cobalt:#1B2D4A;--dust:#7A7060;
+  --border:rgba(17,16,9,0.13);--sidebar:340px;--hdr:56px;--bot:54px;
+  --fc:'Barlow Condensed','Arial Narrow',sans-serif;--fb:'Barlow',sans-serif;
+  --cat-musique:#F2B705;--cat-cinema:#0077A8;--cat-theatre:#8E7CC3;
+  --cat-expo:#009688;--cat-gastronomie:#FF6A00;--cat-degustation:#B3122B;
+  --cat-brocante:#D95F2B;--cat-marche:#7DA32D;--cat-enfants:#F6AFC8;
+  --cat-sport:#8CC9F0;--cat-nature:#2E7D32;--cat-portes-ouvertes:#E9B100;
+  --cat-fete:#FF3D55;--cat-patrimoine:#C8A76A;--cat-ateliers:#008C8C;
+  --cat-default:#E23D28;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;-webkit-font-smoothing:antialiased}
+body{background:var(--cream);color:var(--ink);font-family:var(--fb);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");}
+
+#shell{display:grid;height:100vh;
+  grid-template-columns:var(--sidebar) 1fr;
+  grid-template-rows:var(--hdr) 1fr;
+  grid-template-areas:"sidebar topbar""sidebar map";}
+
+/* ── SIDEBAR ── */
+#sidebar{grid-area:sidebar;background:var(--cream);border-right:2px solid var(--ink);
+  display:flex;flex-direction:column;overflow:hidden;position:relative;z-index:200;}
+#sidebar::before{display:none;}
+#sidebar::after{display:none;}
+/* Stripe column: fixed 28px wide on left of sidebar */
+.sidebar-stripes{
+  position:absolute;left:0;top:0;bottom:0;width:28px;
+  display:flex;flex-direction:row;align-items:stretch;
+  gap:4px;padding:0 6px;
+  pointer-events:none;z-index:10;
+  background:var(--cream);
+  border-right:1px solid rgba(17,16,9,0.06);
+}
+.sidebar-stripes span:nth-child(1){flex:0 0 5px;background:var(--rouge);}
+.sidebar-stripes span:nth-child(2){flex:0 0 3px;background:var(--rouge);}
+.sidebar-stripes span:nth-child(3){flex:0 0 2px;background:var(--rouge);}
+.sidebar-stripes span:nth-child(4){flex:0 0 1px;background:var(--rouge);}
+.s-logo{padding:24px 24px 20px 44px;border-bottom:1px solid var(--border);flex-shrink:0;
+  position:relative;
+  background-image:url('/soirfr-village.jpg');
+  background-repeat:no-repeat;
+  background-size:contain;
+  background-position:right center;
+  overflow:hidden;
+}
+.s-logo > *{position:relative;z-index:1;}
+.s-logo-wordmark{font-family:var(--fc);font-weight:900;font-size:96px;line-height:0.88;letter-spacing:-0.03em;color:var(--ink);text-transform:uppercase;user-select:none;}
+.s-logo-wordmark .FR{color:var(--rouge);}
+.s-logo-tag{margin-top:12px;font-family:var(--fc);font-weight:700;font-size:15px;letter-spacing:0.22em;text-transform:uppercase;color:var(--rouge);line-height:1.6;}
+
+.s-filters{flex:1;overflow-y:auto;scrollbar-width:none;padding:14px 20px 14px 44px;}
+.s-filters::-webkit-scrollbar{display:none}
+.f-group{margin-bottom:14px;}
+.f-label{font-family:var(--fc);font-weight:700;font-size:9px;letter-spacing:0.22em;text-transform:uppercase;color:var(--dust);margin-bottom:5px;}
+.f-rule{width:24px;height:2px;background:var(--rouge);margin-bottom:6px;}
+.f-select{width:100%;background:transparent;border:1px solid var(--border);border-radius:0;padding:10px 12px;font-family:var(--fc);font-size:15px;font-weight:600;letter-spacing:0.04em;color:var(--ink);appearance:none;-webkit-appearance:none;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23111009' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;cursor:pointer;outline:none;}
+.f-select:focus{border-color:var(--rouge);}
+.f-select option{background:var(--cream);color:var(--ink);}
+.f-radius-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;}
+.f-radius-val{font-family:var(--fc);font-weight:700;font-size:15px;letter-spacing:0.04em;color:var(--ink);}
+input[type=range]{width:100%;-webkit-appearance:none;height:3px;background:var(--border);border-radius:0;outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;background:var(--rouge);border-radius:50%;border:2px solid var(--cream);box-shadow:0 1px 4px rgba(0,0,0,0.25);}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;background:var(--rouge);border-radius:50%;border:2px solid var(--cream);}
+.f-cats{
+  display:flex;flex-wrap:wrap;gap:6px;
+}
+.f-cat{
+  background:#FAF6EC;
+  border:1.5px solid var(--border);
+  border-radius:24px;
+  padding:6px 13px 6px 6px;
+  font-family:var(--fc);font-size:12px;font-weight:700;
+  letter-spacing:0.08em;text-transform:uppercase;
+  color:var(--ink);cursor:pointer;
+  transition:all 0.15s;
+  display:flex;align-items:center;gap:8px;
+  white-space:nowrap;
+  flex-shrink:0;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,0.9), 0 1px 2px rgba(17,16,9,0.13), 0 4px 9px rgba(17,16,9,0.08);
+}
+.f-cat .ci{
+  width:26px;height:26px;border-radius:50%;flex-shrink:0;
+  display:flex;align-items:center;justify-content:center;
+  font-size:15px;line-height:1;
+  background:color-mix(in srgb, var(--cc) 18%, transparent);
+}
+.f-cat:hover{transform:translateY(-1px);box-shadow:inset 0 1px 0 rgba(255,255,255,0.9), 0 2px 4px rgba(17,16,9,0.16), 0 6px 13px rgba(17,16,9,0.1);}
+.f-cat:active{transform:translateY(1px);box-shadow:inset 0 1px 2px rgba(17,16,9,0.18), 0 1px 1px rgba(17,16,9,0.1);}
+.f-cat.on{
+  background:color-mix(in srgb, var(--cc) 13%, #FAF6EC);
+  border-color:var(--cc);
+  color:var(--cc);
+}
+.f-cat.on .ci{background:color-mix(in srgb, var(--cc) 30%, transparent);}
+.f-cat[data-cat=""]{padding-left:13px;}
+.f-cat[data-cat=""].on{background:var(--rouge);border-color:var(--rouge);color:#fff;}
+.f-section-label{
+  font-family:var(--fc);font-weight:800;font-size:17px;
+  letter-spacing:0.1em;text-transform:uppercase;
+  color:var(--ink);margin-bottom:8px;
+  padding-bottom:6px;border-bottom:2px solid var(--rouge);
+  display:inline-block;
+}
+
+
+
+/* ── FOOTER (updated) ── */
+.s-foot{background:var(--ink);padding:14px 24px 14px 36px;display:flex;align-items:center;gap:18px;flex-shrink:0;}
+.s-foot a{font-family:var(--fc);font-size:12px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:rgba(240,234,216,0.55);text-decoration:none;transition:color 0.15s;}
+.s-foot a:hover{color:var(--cream);}
+.s-foot a.primary{color:var(--rouge);}
+.s-foot a.primary:hover{color:#E84A30;}
+.s-foot-sep{width:1px;height:12px;background:rgba(255,255,255,0.18);}
+
+/* ── TOP BAR ── */
+#topbar{grid-area:topbar;background:white;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;gap:12px;z-index:150;overflow:visible;}
+
+.tb-sep{width:1px;height:20px;background:var(--border);}
+.tb-action{font-family:var(--fc);font-weight:700;font-size:12px;letter-spacing:0.14em;text-transform:uppercase;color:var(--ink);background:transparent;border:none;cursor:pointer;padding:6px 4px;transition:color 0.12s;white-space:nowrap;}
+.tb-action:hover{color:var(--rouge);}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:12px;}
+.lang-sw{display:flex;}
+.lang-b{background:transparent;border:1px solid var(--border);padding:4px 10px;font-family:var(--fc);font-size:11px;font-weight:700;letter-spacing:0.1em;color:var(--dust);cursor:pointer;transition:all 0.12s;}
+.lang-b:first-child{border-radius:2px 0 0 2px;}
+.lang-b:last-child{border-radius:0 2px 2px 0;border-left:none;}
+.lang-b.on{background:var(--ink);color:var(--cream);border-color:var(--ink);}
+.tb-menu{width:32px;height:32px;background:var(--ink);border-radius:50%;border:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;flex-shrink:0;}
+.tb-menu span{width:12px;height:1.5px;background:var(--cream);display:block;}
+
+/* ── MAP ── */
+#map-area{grid-area:map;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+#map-wrap{flex:1 1 0;min-height:0;position:relative;}
+#map{width:100%;height:100%;}
+.locate-btn{width:30px;height:30px;background:#fff;border:none;cursor:pointer;font-size:17px;line-height:30px;text-align:center;color:var(--ink);display:block;padding:0;}
+.locate-btn:hover{background:#f4f4f4;color:var(--rouge);}
+
+
+
+/* ── CUSTOM CLUSTER MARKERS ── */
+.soirfr-cluster{
+  background:white;
+  border:2px solid rgba(17,16,9,0.15);
+  border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  font-family:'Barlow Condensed','Arial Narrow',sans-serif;
+  font-weight:800;color:var(--ink);
+  box-shadow:0 2px 8px rgba(0,0,0,0.15);
+  cursor:pointer;
+  transition:transform 0.15s;
+}
+.soirfr-cluster:hover{transform:scale(1.1);}
+.soirfr-cluster-sm{width:32px;height:32px;font-size:13px;}
+.soirfr-cluster-md{width:40px;height:40px;font-size:15px;border-width:2.5px;}
+.soirfr-cluster-lg{width:50px;height:50px;font-size:17px;border-width:3px;background:#FFF8F0;}
+
+/* ── EVENT PINS ── */
+.map-pin{
+  width:30px;height:30px;border-radius:50%;
+  background:color-mix(in srgb, var(--pc,var(--rouge)) 18%, #FAF6EC);
+  box-shadow:0 2px 6px rgba(17,16,9,0.3);
+  cursor:pointer;
+  transition:transform 0.15s;
+  display:flex;align-items:center;justify-content:center;
+  font-size:16px;line-height:1;
+}
+.map-pin.active{
+  transform:scale(1.16);
+  background:color-mix(in srgb, var(--pc,var(--rouge)) 30%, #FAF6EC);
+  box-shadow:0 0 0 5px rgba(194,50,31,0.22),0 0 0 10px rgba(194,50,31,0.09),0 2px 8px rgba(17,16,9,0.4);
+  animation:pinPulse 1.5s ease infinite;
+  z-index:1000;
+}
+@keyframes pinPulse{
+  0%{box-shadow:0 0 0 4px rgba(194,50,31,0.28),0 0 0 9px rgba(194,50,31,0.1),0 2px 8px rgba(17,16,9,0.4);}
+  50%{box-shadow:0 0 0 7px rgba(194,50,31,0.18),0 0 0 14px rgba(194,50,31,0.05),0 2px 8px rgba(17,16,9,0.4);}
+  100%{box-shadow:0 0 0 4px rgba(194,50,31,0.28),0 0 0 9px rgba(194,50,31,0.1),0 2px 8px rgba(17,16,9,0.4);}
+}
+.user-dot{width:12px;height:12px;background:var(--cobalt);border-radius:50%;border:3px solid white;box-shadow:0 0 0 4px rgba(27,45,74,0.2);}
+
+/* ── EVENT POPUP (near pin) ── */
+.leaflet-cluster-spider-leg{stroke:#C2321F !important;stroke-opacity:0.25 !important;stroke-width:1.5px !important;}
+.leaflet-popup-content-wrapper{
+  background:white;border-radius:0;
+  border-top:3px solid var(--rouge);
+  box-shadow:0 8px 32px rgba(0,0,0,0.18);
+  padding:0;min-width:260px;max-width:300px;
+}
+.leaflet-popup-content{margin:0 !important;}
+.leaflet-popup-tip-container{margin-top:-1px;}
+.leaflet-popup-tip{background:white;}
+.leaflet-popup-close-button{
+  color:var(--dust) !important;top:10px !important;right:12px !important;
+  font-size:18px !important;font-weight:300 !important;
+}
+.lp-img{height:120px;overflow:hidden;position:relative;}
+.lp-img img{width:100%;height:100%;object-fit:cover;}
+.lp-img-ph{width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:2rem;background:#E8E0D0;}
+/* Real photo (a scanned flyer, a poster) → tapping it should open it full-size.
+   Placeholder icon (no photo available) isn't clickable — nothing to enlarge. */
+.lp-img.has-photo img{cursor:zoom-in;}
+
+/* ── IMAGE MODAL (full-size flyer/photo view) ── */
+.img-modal{
+  display:none;position:fixed;inset:0;
+  background:rgba(17,16,9,0.92);
+  z-index:3000;align-items:center;justify-content:center;
+  padding:24px;cursor:zoom-out;
+}
+.img-modal.show{display:flex;}
+.img-modal img{max-width:100%;max-height:100%;object-fit:contain;}
+.lp-body{padding:12px 14px 10px;}
+.lp-cat{font-family:var(--fc);font-size:11px;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--rouge);margin-bottom:4px;}
+.lp-title{font-family:var(--fc);font-size:20px;font-weight:800;color:var(--ink);line-height:1.15;margin-bottom:6px;}
+.lp-rule{width:20px;height:2px;background:var(--rouge);margin-bottom:8px;}
+.lp-meta-row{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--dust);font-weight:300;margin-bottom:3px;}
+.lp-meta-icon{font-size:12px;}
+.lp-foot{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;border-top:1px solid var(--border);margin-top:4px;}
+.lp-desc{font-size:13px;line-height:1.45;color:var(--ink);font-weight:300;margin-top:8px;display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;}
+.lp-contact{padding:6px 14px 0;display:flex;flex-direction:column;gap:5px;}
+.lp-contact-row{font-size:13px;color:var(--rouge);text-decoration:none;display:flex;align-items:center;gap:6px;font-weight:400;word-break:break-all;}
+.lp-contact-row:hover{color:var(--ink);}
+.lp-link{font-family:var(--fc);font-size:13px;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--rouge);text-decoration:none;display:flex;align-items:center;gap:6px;}
+.lp-link:hover{color:var(--ink);}
+.lp-free{font-family:var(--fc);font-size:9px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#5A7A4A;border:1px solid #5A7A4A;padding:2px 6px;}
+
+/* ── LOADING ── */
+#loading-cover{position:absolute;inset:0;background:rgba(240,234,216,0.65);display:flex;align-items:center;justify-content:center;z-index:600;backdrop-filter:blur(2px);}
+.lc-inner{background:var(--ink);padding:16px 24px;display:flex;align-items:center;gap:12px;}
+.lc-dots{display:flex;gap:5px;}
+.lc-dot{width:7px;height:7px;background:var(--rouge);border-radius:50%;animation:ldot 1s ease infinite;}
+.lc-dot:nth-child(2){animation-delay:0.15s;}.lc-dot:nth-child(3){animation-delay:0.3s;}
+@keyframes ldot{0%,100%{opacity:0.3;transform:scale(0.7)}50%{opacity:1;transform:scale(1)}}
+.lc-text{font-family:var(--fc);font-size:11px;font-weight:700;letter-spacing:0.2em;text-transform:uppercase;color:var(--cream);}
+
+/* ── BOTTOM DRAWER ── */
+#drawer{flex:0 0 auto;display:flex;flex-direction:column;background:var(--ink);}
+#drawer-grip{height:16px;flex-shrink:0;background:var(--ink);border-top:2px solid var(--rouge);
+  cursor:ns-resize;display:flex;align-items:center;justify-content:center;touch-action:none;}
+#drawer-grip::after{content:'';width:40px;height:4px;border-radius:2px;background:rgba(255,255,255,0.28);transition:background 0.15s;}
+#drawer-grip:hover::after{background:rgba(255,255,255,0.55);}
+#drawer-tab{cursor:pointer;user-select:none;flex-shrink:0;background:var(--ink);display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:var(--bot);}
+.dt-left{display:flex;align-items:baseline;gap:10px;}
+.dt-count{font-family:var(--fc);font-size:32px;font-weight:900;color:var(--cream);line-height:1;}
+.dt-label{font-family:var(--fc);font-size:12px;font-weight:700;letter-spacing:0.18em;text-transform:uppercase;color:rgba(240,234,216,0.45);}
+.dt-loc{font-family:var(--fc);font-size:13px;font-weight:600;color:var(--rouge);margin-left:8px;}
+.dt-right{display:flex;align-items:center;gap:8px;}
+.dt-toggle{font-family:var(--fc);font-size:12px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:var(--rouge);display:flex;align-items:center;gap:6px;}
+.dt-arrow{font-size:14px;transition:transform 0.3s;display:inline-block;}
+.dt-arrow.up{transform:rotate(180deg);}
+
+#drawer-list{background:white;overflow-y:auto;height:0;transition:height 0.3s cubic-bezier(0.16,1,0.3,1);}
+#drawer-list.dragging{transition:none;}
+
+
+.dl-item{display:flex;align-items:stretch;border-bottom:1px solid var(--border);cursor:pointer;transition:background 0.1s;}
+.dl-item:hover{background:#FAFAF8;}
+.dl-item.active{background:var(--ink);}
+.dl-item.active .dl-title{color:var(--cream);}
+.dl-item.active .dl-meta,.dl-item.active .dl-mon{color:rgba(240,234,216,0.45);}
+.dl-item.active .dl-cat{color:var(--rouge);}
+.dl-item.active .dl-date-block{border-right-color:rgba(255,255,255,0.1);}
+.dl-item.active .dl-day{color:var(--cream);}
+.dl-date-block{width:54px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:10px 6px;border-right:1px solid var(--border);}
+.dl-day{font-family:var(--fc);font-size:24px;font-weight:800;line-height:1;color:var(--ink);}
+.dl-mon{font-family:var(--fc);font-size:11px;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--dust);margin-top:2px;}
+.dl-thumb{width:64px;flex-shrink:0;overflow:hidden;background:var(--cream);}
+.dl-thumb img{width:100%;height:100%;object-fit:cover;}
+.dl-thumb-ph{width:100%;height:100%;min-height:64px;display:flex;align-items:center;justify-content:center;font-size:1.2rem;background:#E8E0D0;}
+.dl-body{flex:1;padding:9px 12px;min-width:0;}
+.dl-cat{font-family:var(--fc);font-size:10px;font-weight:700;letter-spacing:0.16em;text-transform:uppercase;color:var(--rouge);margin-bottom:2px;}
+.dl-title{font-family:var(--fc);font-size:17px;font-weight:700;line-height:1.2;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dl-meta{font-size:13px;color:var(--dust);font-weight:300;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.dl-free{flex-shrink:0;display:flex;align-items:center;padding:0 10px;}
+.dl-free-tag{font-family:var(--fc);font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#5A7A4A;border:1px solid #5A7A4A;border-radius:2px;padding:2px 5px;}
+
+
+/* mobile-only controls (hidden on desktop) */
+.tb-filters-btn{display:none;align-items:center;gap:6px;font-family:var(--fc);font-weight:700;font-size:12px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink);background:transparent;border:1px solid var(--border);border-radius:2px;padding:7px 11px;cursor:pointer;white-space:nowrap;}
+.tb-filters-btn:hover{border-color:var(--rouge);color:var(--rouge);}
+#filters-close{display:none;position:absolute;top:12px;right:14px;width:30px;height:30px;align-items:center;justify-content:center;background:var(--ink);color:var(--cream);border:none;border-radius:50%;font-size:16px;line-height:1;cursor:pointer;}
+.s-mobile-actions{display:none;gap:20px;padding:16px 18px 22px;border-top:1px solid var(--border);}
+.s-mobile-actions a{font-family:var(--fc);font-weight:700;font-size:13px;letter-spacing:0.1em;text-transform:uppercase;color:var(--ink);text-decoration:none;}
+.s-mobile-actions a.primary{color:var(--rouge);}
+#filters-backdrop{display:none;position:fixed;inset:52px 0 0 0;background:rgba(17,16,9,0.35);z-index:1400;}
+#filters-backdrop.open{display:block;}
+#m-top{display:none;}
+#search-area-btn{display:none;}
+
+@media(max-width:860px){
+  html,body{overflow:hidden;height:100%;}
+  #shell{display:flex;flex-direction:column;height:100vh;height:100dvh;}
+
+  /* Hide all the desktop chrome on mobile */
+  #topbar,#sidebar,#filters-backdrop{display:none!important;}
+
+  /* ── Google-style top: search bar + horizontal category chips ── */
+  #m-top{display:flex;flex-direction:column;order:1;flex-shrink:0;gap:8px;
+    background:var(--cream);border-bottom:1px solid var(--border);padding:9px 10px;
+    position:relative;z-index:1200;}
+  .m-brand-row{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+  .m-tagline{font-family:var(--fc);font-weight:700;font-size:11px;letter-spacing:0.18em;
+    text-transform:uppercase;color:var(--rouge);line-height:1.2;text-align:left;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    padding-bottom:2px;}
+  .m-logo{font-family:var(--fc);font-weight:900;font-size:34px;line-height:1;
+    letter-spacing:-0.02em;text-transform:uppercase;color:var(--ink);user-select:none;}
+  .m-logo .FR{color:var(--rouge);}
+  .m-actions{display:flex;align-items:center;gap:10px;flex-shrink:0;}
+  .m-nav{font-family:var(--fc);font-weight:700;font-size:11.5px;text-transform:uppercase;
+    letter-spacing:0.04em;color:var(--rouge);text-decoration:none;white-space:nowrap;}
+  .m-search-row{display:flex;align-items:center;gap:8px;background:#fff;
+    border:1px solid var(--border);border-radius:24px;padding:8px 12px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.06);position:relative;}
+  .m-search-row .m-ico{font-size:15px;color:var(--dust);flex-shrink:0;}
+  #m-search{flex:1;min-width:0;border:none;outline:none;background:transparent;
+    font-family:var(--fc);font-size:15px;font-weight:600;color:var(--ink);}
+  .m-search-row .lang-sw{flex-shrink:0;}
+  .m-ac-list{display:none;position:absolute;left:0;right:0;top:calc(100% + 5px);
+    background:#fff;border:1px solid var(--border);border-radius:12px;z-index:9999;
+    max-height:240px;overflow-y:auto;box-shadow:0 8px 22px rgba(0,0,0,0.16);}
+
+  .m-chip-row{display:flex;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;
+    scrollbar-width:none;padding:1px 2px 3px;}
+  .m-chip-row::-webkit-scrollbar{display:none;}
+  .m-chip,.m-when-chip,.m-link-chip{flex:0 0 auto;white-space:nowrap;
+    font-family:var(--fc);font-weight:700;font-size:13px;color:var(--ink);
+    background:#fff;border:1px solid var(--border);border-radius:20px;
+    cursor:pointer;line-height:1;}
+  .m-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 13px 5px 5px;}
+  .m-chip[data-cat=""]{padding:7px 15px;}
+  .m-chip .mi{width:22px;height:22px;border-radius:50%;flex-shrink:0;
+    display:inline-flex;align-items:center;justify-content:center;
+    font-size:13px;line-height:1;background:color-mix(in srgb, var(--cc) 20%, transparent);}
+  .m-chip.on{background:color-mix(in srgb, var(--cc) 14%, #fff);border-color:var(--cc);color:var(--cc);}
+  .m-chip.on .mi{background:color-mix(in srgb, var(--cc) 32%, transparent);}
+  .m-chip[data-cat=""].on{background:var(--rouge);border-color:var(--rouge);color:#fff;}
+  .m-when-chip{appearance:none;-webkit-appearance:none;padding:7px 28px 7px 14px;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%23999' fill='none' stroke-width='1.5'/></svg>");
+    background-repeat:no-repeat;background-position:right 12px center;}
+  .m-chip-sep{flex:0 0 auto;width:1px;align-self:stretch;background:var(--border);margin:4px 2px;}
+  .m-link-chip{padding:7px 14px;color:var(--rouge);text-decoration:none;display:inline-flex;align-items:center;border-color:#E4D9C6;}
+
+  /* Map fills the rest; the results drawer rides below it (draggable) */
+  #map-area{order:2;flex:1 1 auto;min-height:0;}
+
+  /* "Search this area" pill, centered over the top of the map */
+  #search-area-btn{position:absolute;top:12px;left:50%;transform:translateX(-50%);
+    z-index:1100;align-items:center;gap:6px;background:#fff;color:var(--ink);
+    border:1px solid var(--border);border-radius:22px;padding:9px 18px;cursor:pointer;
+    font-family:var(--fc);font-weight:700;font-size:11.5px;letter-spacing:0.08em;
+    text-transform:uppercase;box-shadow:0 4px 14px rgba(0,0,0,0.2);}
+
+  /* Smaller event popup on mobile */
+  .soirfr-popup-m .lp-img{height:84px;}
+  .soirfr-popup-m .lp-title{font-size:16px;}
+  .soirfr-popup-m .lp-body{padding:9px 11px 8px;}
+  .soirfr-popup-m .lp-desc{-webkit-line-clamp:2;font-size:12px;margin-top:6px;}
+}
+</style>
+</head>
+<body>
+<div id="shell">
+<div id="filters-backdrop" onclick="closeFilters()"></div>
+
+  <!-- SIDEBAR -->
+  <div id="sidebar">
+    <div class="sidebar-stripes"><span></span><span></span><span></span><span></span></div>
+    <div class="s-logo">
+      <div class="s-logo-wordmark">Soir<span class="FR">FR</span></div>
+      <div class="s-logo-tag" id="s-tag">Agenda Local<br>Culture &amp; Événements</div>
+      <button id="filters-close" onclick="closeFilters()" aria-label="Fermer les filtres">✕</button>
+    </div>
+
+    <div class="s-filters">
+
+      <!-- OÙ -->
+      <div class="f-group">
+        <div class="f-section-label" id="lbl-where">Où ?</div>
+        <div style="position:relative;margin-bottom:8px;" id="autocomplete-wrap">
+          <span style="position:absolute;left:10px;top:12px;font-size:13px;color:var(--dust);pointer-events:none;z-index:1;">⌖</span>
+          <input type="text" id="addr-input-sidebar" placeholder="Adresse, ville, code postal…"
+            autocomplete="off"
+            style="width:100%;border:1px solid var(--border);padding:9px 8px 9px 28px;font-family:var(--fc);font-size:14px;font-weight:600;letter-spacing:0.02em;color:var(--ink);outline:none;background:transparent;"
+            oninput="onAddrInput(this.value)"
+            onfocus="this.style.borderColor='var(--rouge)'"
+            onblur="setTimeout(()=>{document.getElementById('autocomplete-list').style.display='none'},200)">
+          <div id="autocomplete-list" style="display:none;position:absolute;left:0;right:0;top:100%;background:white;border:1px solid var(--border);border-top:none;z-index:9999;max-height:200px;overflow-y:auto;box-shadow:0 4px 16px rgba(0,0,0,0.1);"></div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span style="font-family:var(--fc);font-size:11px;color:var(--dust);letter-spacing:0.06em;" id="lbl-radius">Rayon</span>
+          <span style="font-family:var(--fc);font-weight:700;font-size:13px;color:var(--ink);" id="radius-val">20 KM</span>
+        </div>
+        <input type="range" id="radius-range" min="5" max="200" value="20" step="5"
+          oninput="document.getElementById('radius-val').textContent=this.value+' KM';
+                   const t=document.getElementById('radius-select-top');
+                   if(t)t.value=this.value;"
+          onchange="applyRadius(this.value)">
+      </div>
+
+      <!-- QUAND — unified single control -->
+      <div class="f-group">
+        <div class="f-section-label" id="lbl-when">Quand ?</div>
+        <select class="f-select" id="when-sel" onchange="onWhenChange(this.value);if(userLat&&this.value!=='custom')doSearch(userLat,userLng,userLabel);">
+          <option value="today"   id="opt-today">Aujourd'hui</option>
+          <option value="weekend" id="opt-weekend">Ce week-end</option>
+          <option value="week"    selected id="opt-week">Cette semaine</option>
+          <option value="month"   id="opt-month">Ce mois</option>
+          <option value="year"    id="opt-year">Toute l'année</option>
+          <option value="custom"  id="opt-custom">Dates précises…</option>
+        </select>
+        <!-- Date range — only shows when "Dates précises" is selected -->
+        <div id="date-range-wrap" style="display:none;margin-top:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="flex:1;">
+              <div style="font-family:var(--fc);font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--dust);margin-bottom:4px;" id="lbl-from">Du</div>
+              <input type="date" id="date-from" class="f-select" style="background-image:none;padding:7px 10px;"
+                onchange="if(userLat)doSearch(userLat,userLng,userLabel);">
+            </div>
+            <div style="font-family:var(--fc);font-weight:700;font-size:16px;color:var(--dust);margin-top:18px;">→</div>
+            <div style="flex:1;">
+              <div style="font-family:var(--fc);font-size:10px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--dust);margin-bottom:4px;" id="lbl-to">Au</div>
+              <input type="date" id="date-to" class="f-select" style="background-image:none;padding:7px 10px;"
+                onchange="if(userLat)doSearch(userLat,userLng,userLabel);">
+            </div>
+          </div>
+        </div>
+        <!-- Hidden single date for compatibility -->
+        <input type="date" id="date-inp" style="display:none;">
+      </div>
+      <div class="f-group">
+        <div class="f-section-label" id="lbl-cats">Catégories</div>
+        <div class="f-cats">
+          <button class="f-cat on" data-cat="" onclick="pickCat(this,'')"><span class="cl" id="cat-all">Toutes</span></button>
+          <button class="f-cat" data-cat="musique" onclick="pickCat(this,'musique')" style="--cc:var(--cat-musique)"><span class="ci"></span><span class="cl">Musique</span></button>
+          <button class="f-cat" data-cat="cinema" onclick="pickCat(this,'cinema')" style="--cc:var(--cat-cinema)"><span class="ci"></span><span class="cl">Cinéma</span></button>
+          <button class="f-cat" data-cat="theatre" onclick="pickCat(this,'theatre')" style="--cc:var(--cat-theatre)"><span class="ci"></span><span class="cl">Spectacles</span></button>
+          <button class="f-cat" data-cat="expo" onclick="pickCat(this,'expo')" style="--cc:var(--cat-expo)"><span class="ci"></span><span class="cl">Expos</span></button>
+          <button class="f-cat" data-cat="gastronomie" onclick="pickCat(this,'gastronomie')" style="--cc:var(--cat-gastronomie)"><span class="ci"></span><span class="cl">Gastronomie</span></button>
+          <button class="f-cat" data-cat="degustation" onclick="pickCat(this,'degustation')" style="--cc:var(--cat-degustation)"><span class="ci"></span><span class="cl">Dégustations</span></button>
+          <button class="f-cat" data-cat="brocante" onclick="pickCat(this,'brocante')" style="--cc:var(--cat-brocante)"><span class="ci"></span><span class="cl">Brocantes</span></button>
+          <button class="f-cat" data-cat="marche" onclick="pickCat(this,'marche')" style="--cc:var(--cat-marche)"><span class="ci"></span><span class="cl">Marchés</span></button>
+          <button class="f-cat" data-cat="enfants" onclick="pickCat(this,'enfants')" style="--cc:var(--cat-enfants)"><span class="ci"></span><span class="cl">Enfants</span></button>
+          <button class="f-cat" data-cat="sport" onclick="pickCat(this,'sport')" style="--cc:var(--cat-sport)"><span class="ci"></span><span class="cl">Sport</span></button>
+          <button class="f-cat" data-cat="nature" onclick="pickCat(this,'nature')" style="--cc:var(--cat-nature)"><span class="ci"></span><span class="cl">Nature</span></button>
+          <button class="f-cat" data-cat="portes-ouvertes" onclick="pickCat(this,'portes-ouvertes')" style="--cc:var(--cat-portes-ouvertes)"><span class="ci"></span><span class="cl">Portes Ouvertes</span></button>
+          <button class="f-cat" data-cat="fete" onclick="pickCat(this,'fete')" style="--cc:var(--cat-fete)"><span class="ci"></span><span class="cl">Fêtes</span></button>
+          <button class="f-cat" data-cat="patrimoine" onclick="pickCat(this,'patrimoine')" style="--cc:var(--cat-patrimoine)"><span class="ci"></span><span class="cl">Patrimoine</span></button>
+          <button class="f-cat" data-cat="ateliers" onclick="pickCat(this,'ateliers')" style="--cc:var(--cat-ateliers)"><span class="ci"></span><span class="cl">Ateliers</span></button>
+        </div>
+      </div>
+    </div>
+    <div class="s-mobile-actions">
+      <a href="/submit.html" class="primary" id="m-add">Soumettre un événement</a>
+      <a href="mailto:bonjour@soirfr.com" id="m-contact">Contact</a>
+    </div>
+  </div>
+
+  <!-- TOP BAR -->
+  <div id="topbar">
+    <div style="flex:1;display:flex;align-items:center;gap:6px;">
+      <span style="font-size:13px;color:var(--dust);">⌖</span>
+      <span id="topbar-location" style="font-family:var(--fc);font-size:14px;font-weight:600;letter-spacing:0.04em;color:var(--ink);">—</span>
+      <span id="topbar-radius" style="font-family:var(--fc);font-size:11px;color:var(--dust);letter-spacing:0.04em;"></span>
+    </div>
+    <button id="tb-filters" class="tb-filters-btn" onclick="toggleFilters()" aria-label="Filtres">☰ Filtres</button>
+    <div class="tb-sep"></div>
+    <a href="/submit.html" class="tb-action" id="tb-add" style="text-decoration:none;">Soumettre un événement</a>
+    <div class="tb-sep"></div>
+    <a href="mailto:bonjour@soirfr.com" class="tb-action" id="tb-contact" style="text-decoration:none;">Contact</a>
+    <div class="tb-right">
+      <div class="lang-sw">
+        <button class="lang-b on" onclick="setLang('fr')">FR</button>
+        <button class="lang-b" onclick="setLang('en')">EN</button>
+      </div>
+    </div>
+    <input type="hidden" id="addr-input">
+    <input type="hidden" id="radius-select-top" value="20">
+  </div>
+
+  <!-- MOBILE TOP: search bar + horizontal category chips (Google-style) -->
+  <div id="m-top">
+    <div class="m-brand-row">
+      <div class="m-logo">Soir<span class="FR">FR</span></div>
+      <div class="m-actions">
+        <a class="m-nav" id="m-add2" href="/submit.html">＋ Événement</a>
+        <a class="m-nav" id="m-contact2" href="mailto:bonjour@soirfr.com">Contact</a>
+        <div class="lang-sw">
+          <button class="lang-b on" onclick="setLang('fr')">FR</button>
+          <button class="lang-b" onclick="setLang('en')">EN</button>
+        </div>
+      </div>
+    </div>
+    <div class="m-tagline" id="m-tag-mobile">Agenda Local · Culture &amp; Événements</div>
+    <div class="m-search-row">
+      <span class="m-ico">⌖</span>
+      <input id="m-search" type="text" placeholder="Adresse, ville, code postal…" autocomplete="off"
+        oninput="onAddrInput(this.value,'mobile')"
+        onblur="setTimeout(()=>{var l=document.getElementById('m-ac-list');if(l)l.style.display='none'},200)">
+      <div id="m-ac-list" class="m-ac-list"></div>
+    </div>
+    <div class="m-chip-row">
+      <select id="m-when" class="m-when-chip" onchange="onWhenChange(this.value);if(userLat)doSearch(userLat,userLng,userLabel);">
+        <option value="today">Aujourd'hui</option>
+        <option value="weekend">Ce week-end</option>
+        <option value="week" selected>Cette semaine</option>
+        <option value="month">Ce mois</option>
+        <option value="year">Toute l'année</option>
+        <option value="custom">Dates précises…</option>
+      </select>
+      <button class="m-chip on" data-cat="" onclick="pickCat(this,'')"><span class="ml">Toutes</span></button>
+      <button class="m-chip" data-cat="musique" style="--cc:var(--cat-musique)" onclick="pickCat(this,'musique')"><span class="mi"></span><span class="ml">Musique</span></button>
+      <button class="m-chip" data-cat="cinema" style="--cc:var(--cat-cinema)" onclick="pickCat(this,'cinema')"><span class="mi"></span><span class="ml">Cinéma</span></button>
+      <button class="m-chip" data-cat="theatre" style="--cc:var(--cat-theatre)" onclick="pickCat(this,'theatre')"><span class="mi"></span><span class="ml">Spectacles</span></button>
+      <button class="m-chip" data-cat="expo" style="--cc:var(--cat-expo)" onclick="pickCat(this,'expo')"><span class="mi"></span><span class="ml">Expos</span></button>
+      <button class="m-chip" data-cat="gastronomie" style="--cc:var(--cat-gastronomie)" onclick="pickCat(this,'gastronomie')"><span class="mi"></span><span class="ml">Gastronomie</span></button>
+      <button class="m-chip" data-cat="degustation" style="--cc:var(--cat-degustation)" onclick="pickCat(this,'degustation')"><span class="mi"></span><span class="ml">Dégustations</span></button>
+      <button class="m-chip" data-cat="brocante" style="--cc:var(--cat-brocante)" onclick="pickCat(this,'brocante')"><span class="mi"></span><span class="ml">Brocantes</span></button>
+      <button class="m-chip" data-cat="marche" style="--cc:var(--cat-marche)" onclick="pickCat(this,'marche')"><span class="mi"></span><span class="ml">Marchés</span></button>
+      <button class="m-chip" data-cat="enfants" style="--cc:var(--cat-enfants)" onclick="pickCat(this,'enfants')"><span class="mi"></span><span class="ml">Enfants</span></button>
+      <button class="m-chip" data-cat="sport" style="--cc:var(--cat-sport)" onclick="pickCat(this,'sport')"><span class="mi"></span><span class="ml">Sport</span></button>
+      <button class="m-chip" data-cat="nature" style="--cc:var(--cat-nature)" onclick="pickCat(this,'nature')"><span class="mi"></span><span class="ml">Nature</span></button>
+      <button class="m-chip" data-cat="portes-ouvertes" style="--cc:var(--cat-portes-ouvertes)" onclick="pickCat(this,'portes-ouvertes')"><span class="mi"></span><span class="ml">Portes Ouvertes</span></button>
+      <button class="m-chip" data-cat="fete" style="--cc:var(--cat-fete)" onclick="pickCat(this,'fete')"><span class="mi"></span><span class="ml">Fêtes</span></button>
+      <button class="m-chip" data-cat="patrimoine" style="--cc:var(--cat-patrimoine)" onclick="pickCat(this,'patrimoine')"><span class="mi"></span><span class="ml">Patrimoine</span></button>
+      <button class="m-chip" data-cat="ateliers" style="--cc:var(--cat-ateliers)" onclick="pickCat(this,'ateliers')"><span class="mi"></span><span class="ml">Ateliers</span></button>
+    </div>
+  </div>
+
+  <!-- MAP AREA -->
+  <div id="map-area">
+    <div id="map-wrap">
+      <div id="map"></div>
+      <button id="search-area-btn" onclick="searchThisArea()">⟳ <span id="sa-txt">Rechercher cette zone</span></button>
+
+      <div id="loading-cover" style="display:none">
+        <div class="lc-inner">
+          <div class="lc-dots"><div class="lc-dot"></div><div class="lc-dot"></div><div class="lc-dot"></div></div>
+          <div class="lc-text" id="lc-txt">Recherche en cours</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="drawer">
+      <div id="drawer-grip" title="Glisser pour redimensionner"></div>
+      <div id="drawer-tab" onclick="toggleDrawer()">
+        <div class="dt-left">
+          <div class="dt-count" id="dt-count">—</div>
+          <div class="dt-label" id="dt-label">Événements</div>
+          <div class="dt-loc" id="dt-loc"></div>
+        </div>
+        <div class="dt-right">
+          <div class="dt-toggle">
+            <span id="dt-toggle-txt">Voir la liste</span>
+            <span class="dt-arrow" id="dt-arrow">↑</span>
+          </div>
+        </div>
+      </div>
+      <div id="drawer-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- IMAGE MODAL: tap a flyer/photo in a popup to see it full-size -->
+<div class="img-modal" id="img-modal" onclick="closeImgModal()">
+  <img id="img-modal-src" src="" alt="">
+</div>
+
+<script>
+const SB_URL='https://ebinsidruxvbzukobshf.supabase.co';
+const SB_KEY='sb_publishable_QSnlPXEopb6x8m8N3K396Q_YPazJ0IM';
+let lang='fr',cats=[],allEvs=[],displayEvs=[],listEvs=[],userLat=null,userLng=null,userLabel='';let drawerOpen=true;
+let drawerListH=260; // current open height of the results list, in px (drag + toggle write here)
+let homeLat=null, homeLng=null; // the user's ACTUAL geolocated position (never overwritten by panning)
+let map=null,clusterGroup=null,userMarker=null,activeIdx=-1;
+let moveTimer=null,searchEnabled=false,suppressMove=false;
+
+const TX={
+  fr:{placeholder:'Rechercher un événement, un lieu…',cta:'Rechercher',lc:'Recherche en cours',addEvent:'Soumettre un événement',submitEvent:'Soumettre un événement',lblWhen:'Quand ?',lblDate:'Date précise',lblWhere:'Où ?',lblAround:'Autour de moi',lblRadius:'Rayon',lblCats:'Catégories',optToday:"Aujourd'hui",optWeekend:'Ce week-end',optWeek:'Cette semaine',optMonth:'Ce mois',optYear:"Toute l'année",optCustom:'Dates précises…',seeList:'Voir la liste',hideList:'Masquer',events:'Événements',noEvents:'Aucun événement trouvé',zoneBtn:'Afficher les événements',zoneSub:'Dans cette zone',free:'Gratuit',from:'À partir de',seeDetails:'Voir détails',until:'jusqu’au',ongoing:'en continu',enCours:'En cours',contact:'Contact',filters:'Filtres',tag:'Agenda Local\nCulture & Événements',months:['jan','fév','mar','avr','mai','juin','juil','aoû','sep','oct','nov','déc'],cats:{'':'Toutes',musique:'Musique',cinema:'Cinéma',theatre:'Spectacles',expo:'Expos',enfants:'Enfants',gastronomie:'Gastronomie',degustation:'Dégustations',brocante:'Brocantes',marche:'Marchés',sport:'Sport',nature:'Nature','portes-ouvertes':'Portes Ouvertes',fete:'Fêtes',patrimoine:'Patrimoine',ateliers:'Ateliers',conference:'Patrimoine',autre:'Expos'}},
+  en:{placeholder:'Search for an event, a place…',cta:'Search',lc:'Searching',addEvent:'Submit an event',submitEvent:'Submit an event',lblWhen:'When?',lblDate:'Date',lblWhere:'Where?',lblAround:'Around me',lblRadius:'Radius',lblCats:'Categories',optToday:'Today',optWeekend:'This weekend',optWeek:'This week',optMonth:'This month',optYear:'This year',optCustom:'Specific dates…',seeList:'Show list',hideList:'Hide',events:'Events',noEvents:'No events found',zoneBtn:'Show events',zoneSub:'In this area',free:'Free',from:'From',seeDetails:'View details',until:'until',ongoing:'ongoing',enCours:'Now on',contact:'Contact',filters:'Filters',tag:'Local Agenda\nCulture & Events',months:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'],cats:{'':'All',musique:'Music',cinema:'Cinema',theatre:'Spectacles',expo:'Exhibitions',enfants:'Kids',gastronomie:'Gastronomy',degustation:'Tastings',brocante:'Flea Markets',marche:'Markets',sport:'Sport',nature:'Nature','portes-ouvertes':'Open Doors',fete:'Festivals',patrimoine:'Heritage',ateliers:'Workshops',conference:'Heritage',autre:'Expos'}}
+};
+
+// SVG category icons — 24x24 viewBox, currentColor fill/stroke.
+// Matched to SoirFR reference art: distinctive shapes for the key categories,
+// clean simple shapes for the rest. No external font dependency.
+const CAT_EMOJI={musique:'🎵',cinema:'🎬',theatre:'🎭',expo:'🖼️',enfants:'🧸','portes-ouvertes':'🚪',gastronomie:'🥖',degustation:'🍷',brocante:'🏺',marche:'🥦',sport:'⚽',nature:'🌿',fete:'🎉',conference:'🏰',patrimoine:'🏰',ateliers:'🎨',autre:'🖼️'};
+const CAT_COLORS={musique:'#F2B705',cinema:'#0077A8',theatre:'#8E7CC3',expo:'#009688',enfants:'#F6AFC8','portes-ouvertes':'#E9B100',gastronomie:'#FF6A00',degustation:'#B3122B',brocante:'#D95F2B',marche:'#7DA32D',sport:'#8CC9F0',nature:'#2E7D32',fete:'#FF3D55',conference:'#C8A76A',patrimoine:'#C8A76A',ateliers:'#008C8C',autre:'#E23D28'};
+function catColor(c){return CAT_COLORS[c]||'#E23D28';}
+function catGlyph(c){return CAT_EMOJI[c]||'📍';}
+function imgFallback(img,cat){img.outerHTML=`<div class="${img.dataset.ph}">${catGlyph(cat)}</div>`;}
+
+// ── IMAGE MODAL ── tap a flyer/photo in a popup to view it full-size.
+// Submitted events (a photo of a physical flyer) often have no website to
+// link out to — the photo itself IS the "more info", so it needs to be
+// viewable at full size, not just as a 120px thumbnail in the popup.
+function openImgModal(e,src){
+  if(e)e.stopPropagation();
+  document.getElementById('img-modal-src').src=src;
+  document.getElementById('img-modal').classList.add('show');
+}
+function closeImgModal(){
+  document.getElementById('img-modal').classList.remove('show');
+}
+function t(k){return TX[lang][k]||TX.fr[k]||k;}
+function catLabel(c){
+  if(!c||c==='autre')return TX[lang].cats['autre']||'Événement';
+  return TX[lang].cats[c]||c; // show raw value if not in our map — helps debug
+}
+function mon(s){const d=new Date(s);return isNaN(d)?'':TX[lang].months[d.getMonth()];}
+function fmtDate(s){if(!s)return '';const d=new Date(s);if(isNaN(d))return '';const h=d.getHours(),m=d.getMinutes();const time=(h===0&&m===0)?'':` · ${String(h).padStart(2,'0')}h${String(m).padStart(2,'0')}`;return `${d.getDate()} ${mon(s)}${time}`;}
+function fmtDay(s){if(!s)return '--';const d=new Date(s);return isNaN(d)?'--':String(d.getDate()).padStart(2,'0');}
+// Escape scraped text before it goes into innerHTML — titles/descriptions come
+// from external sites and must never inject markup.
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function todayISO(){return new Date().toISOString().slice(0,10);}
+// An event is "en cours" when it started before today and runs until today or later
+function isOngoing(ev){
+  const s=String(ev.starts_at||'').slice(0,10), e=String(ev.ends_at||'').slice(0,10);
+  return !!s && !!e && s<todayISO() && e>=todayISO();
+}
+
+function setLang(l){
+  lang=l;
+  document.querySelectorAll('.lang-b').forEach(b=>b.classList.toggle('on',b.textContent===l.toUpperCase()));
+  document.getElementById('addr-input').placeholder=t('placeholder');
+  // cta button removed
+  document.getElementById('lc-txt').textContent=t('lc');
+  document.getElementById('tb-add').textContent=t('addEvent');
+
+  
+  
+  
+  const wl=document.getElementById('lbl-when');if(wl)wl.textContent=t('lblWhen');
+  const whr=document.getElementById('lbl-where');if(whr)whr.textContent=t('lblWhere');
+  const rl=document.getElementById('lbl-radius');if(rl)rl.textContent=t('lblRadius');
+  const si=document.getElementById('addr-input-sidebar');if(si)si.placeholder=t('placeholder');
+  const dl=document.getElementById('lbl-date');if(dl)dl.textContent=t('lblDate');
+  const cl=document.getElementById('lbl-cats');if(cl)cl.textContent=t('lblCats');
+  document.getElementById('opt-today').textContent=t('optToday');
+  document.getElementById('opt-weekend').textContent=t('optWeekend');
+  document.getElementById('opt-week').textContent=t('optWeek');
+  document.getElementById('opt-month').textContent=t('optMonth');
+  const oy=document.getElementById('opt-year');if(oy)oy.textContent=t('optYear');
+  const oc=document.getElementById('opt-custom');if(oc)oc.textContent=t('optCustom');
+  const ftc=document.getElementById('tb-contact');if(ftc)ftc.textContent=t('contact');
+  const ma=document.getElementById('m-add');if(ma)ma.textContent=t('addEvent');
+  const mc=document.getElementById('m-contact');if(mc)mc.textContent=t('contact');
+  const tf=document.getElementById('tb-filters');if(tf)tf.textContent='☰ '+t('filters');
+  const ma2=document.getElementById('m-add2');if(ma2)ma2.textContent=(l==='fr'?'＋ Événement':'＋ Event');
+  const mc2=document.getElementById('m-contact2');if(mc2)mc2.textContent=t('contact');
+  const mtagMobile=document.getElementById('m-tag-mobile');
+  if(mtagMobile)mtagMobile.innerHTML=t('tag').split('\n').join(' · ');
+  const sa=document.getElementById('sa-txt');if(sa)sa.textContent=(l==='fr'?'Rechercher cette zone':'Search this area');
+  const msi=document.getElementById('m-search');if(msi)msi.placeholder=t('placeholder');
+  document.querySelectorAll('.m-chip').forEach(b=>{const c=b.getAttribute('data-cat');const sp=b.querySelector('.ml');if(sp&&TX[l].cats[c]!==undefined)sp.textContent=TX[l].cats[c];});
+  const mw=document.getElementById('m-when');
+  if(mw){const ow={today:'optToday',weekend:'optWeekend',week:'optWeek',month:'optMonth',year:'optYear',custom:'optCustom'};[...mw.options].forEach(o=>{if(ow[o.value])o.textContent=t(ow[o.value]);});}
+  document.getElementById('dt-toggle-txt').textContent=drawerOpen?t('hideList'):t('seeList');
+  document.getElementById('dt-label').textContent=t('events');
+  const tagEl=document.getElementById('s-tag');
+  if(tagEl)tagEl.innerHTML=t('tag').split('\n').join('<br>');
+  document.querySelectorAll('.f-cat').forEach(b=>{
+    const c=b.getAttribute('data-cat');
+    const sp=b.querySelector('.cl');
+    if(sp)sp.textContent=TX[l].cats[c]||TX[l].cats['autre'];
+    const ci=b.querySelector('.ci');
+    if(ci&&c)ci.textContent=CAT_EMOJI[c]||'📍';
+  });
+  if(displayEvs.length)refreshDrawer();
+}
+
+async function geocode(addr){
+  try{const r=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(addr)}&limit=1`);const d=await r.json();const f=d.features?.[0];if(f)return{lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0],label:f.properties.label};}catch(e){}return null;
+}
+async function revGeo(lat,lng){
+  try{const r=await fetch(`https://api-adresse.data.gouv.fr/reverse/?lon=${lng}&lat=${lat}`);const d=await r.json();const f=d.features?.[0];if(f)return f.properties.city||f.properties.label;}catch(e){}return '';
+}
+
+function onWhenChange(val){
+  const wrap=document.getElementById('date-range-wrap');
+  const today=new Date().toISOString().split('T')[0];
+  if(val==='custom'){
+    wrap.style.display='block';
+    const df=document.getElementById('date-from');
+    const dt=document.getElementById('date-to');
+    if(!df.value) df.value=today;
+    if(!dt.value){
+      const nextWeek=new Date(Date.now()+7*86400000).toISOString().split('T')[0];
+      dt.value=nextWeek;
+    }
+    // On mobile the date fields sit inside the filters panel, which may be
+    // shut. Open it, or the inputs appear somewhere the user cannot see.
+    const sb=document.getElementById('sidebar');
+    const tf=document.getElementById('tb-filters');
+    if(sb&&tf&&getComputedStyle(tf).display!=='none'){
+      sb.classList.add('open');
+      const bd=document.getElementById('filters-backdrop');
+      if(bd)bd.classList.add('open');
+    }
+  } else {
+    wrap.style.display='none';
+  }
+}
+
+function dateRange(){
+  const when=document.getElementById('when-sel').value;
+  const now=new Date(), today=now.toISOString().split('T')[0];
+  if(when==='custom'){
+    const df=document.getElementById('date-from')?.value;
+    const dt=document.getElementById('date-to')?.value;
+    if(df&&dt) return{from:df,to:new Date(new Date(dt).getTime()+86400000).toISOString().split('T')[0]};
+    if(df) return{from:df,to:new Date(new Date(df).getTime()+7*86400000).toISOString().split('T')[0]};
+  }
+  if(when==='today') return{from:today,to:new Date(now.getTime()+86400000).toISOString().split('T')[0]};
+  if(when==='weekend'){
+    // Sat=6, Sun=0. On Sunday the weekend is still ON — include today, end tomorrow.
+    const day=now.getDay();
+    if(day===0) return{from:today,to:new Date(now.getTime()+86400000).toISOString().split('T')[0]};
+    const sat=new Date(now.getTime()+(6-day)*86400000);
+    return{from:day===6?today:sat.toISOString().split('T')[0],to:new Date(sat.getTime()+2*86400000).toISOString().split('T')[0]};}
+  if(when==='week') return{from:today,to:new Date(now.getTime()+7*86400000).toISOString().split('T')[0]};
+  if(when==='month') return{from:today,to:new Date(now.getTime()+30*86400000).toISOString().split('T')[0]};
+  if(when==='year') return{from:today,to:new Date(now.getTime()+365*86400000).toISOString().split('T')[0]};
+  return{from:today,to:new Date(now.getTime()+7*86400000).toISOString().split('T')[0]};
+}
+
+async function fetchEvs(lat,lng,km,from,to,catsArr){
+  const r=await fetch(`${SB_URL}/rest/v1/rpc/events_near_point`,{method:'POST',headers:{'apikey':SB_KEY,'Authorization':`Bearer ${SB_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({lat,lng,radius_km:km,cat:(catsArr&&catsArr.length===1?catsArr[0]:null),date_from:from,date_to:to,max_results:5000})});
+  if(!r.ok)throw new Error(r.status);
+  return r.json();
+}
+
+async function doSearch(oLat,oLng,oLabel){
+  hideSearchArea();
+  // Sync sidebar address to topbar
+  const sidebarAddr=document.getElementById('addr-input-sidebar');
+  if(sidebarAddr&&sidebarAddr.value.trim())
+    document.getElementById('addr-input').value=sidebarAddr.value.trim();
+  const addrVal=document.getElementById('addr-input').value.trim();
+  // Read radius from top bar selector (primary) or sidebar slider
+  const topRad=document.getElementById('radius-select-top');
+  const km=topRad?parseFloat(topRad.value):parseFloat(document.getElementById('radius-range').value)||25;
+  // Keep sidebar slider in sync
+  const slider=document.getElementById('radius-range');
+  if(slider&&topRad)slider.value=topRad.value;
+  document.getElementById('radius-val').textContent=km+' KM';
+  let lat=oLat,lng=oLng,label=oLabel;
+  if(!lat&&addrVal){showLoading();const g=await geocode(addrVal);if(!g){hideLoading();return;}lat=g.lat;lng=g.lng;label=g.label;}
+  if(!lat){hideLoading();return;}
+  userLat=lat;userLng=lng;userLabel=label||'';
+  document.getElementById('addr-input').value=label||addrVal;
+  const sbar=document.getElementById('addr-input-sidebar');
+  if(sbar)sbar.value=label||addrVal;
+  const tloc=document.getElementById('topbar-location');
+  if(tloc)tloc.textContent=label||addrVal||'—';
+  const trad=document.getElementById('topbar-radius');
+  const km2=document.getElementById('radius-range');
+  if(trad&&km2)trad.textContent='· '+km2.value+' km';
+  setRadiusUI(km);
+  showLoading();
+  // Zoom the map to show this radius, then fetch enough to fill the whole view
+  zoomToRadius(lat,lng,km);
+  const fetchKm=viewportFetchKm();
+  const{from,to}=dateRange();
+  try{
+    allEvs=await fetchEvs(lat,lng,fetchKm,from,to,cats);
+    rebuildViews(allEvs);
+    renderMapPins(filterCats(displayEvs));
+    hideLoading();
+  }catch(e){console.error(e);hideLoading();}
+}
+
+function searchInView(){
+  if(!map)return;
+  hideSearchArea();
+  const center=map.getCenter();
+  const edgeKm=viewportRadiusKm();   // the radius the map is currently showing
+  const fetchKm=viewportFetchKm();   // fetch to the corners so nothing is missing
+  setRadiusUI(edgeKm);               // the map drives the km readout
+  const{from,to}=dateRange();
+  // Uses current QUAND + CATEGORIES from sidebar — map pan respects all filters
+  fetchEvs(center.lat,center.lng,fetchKm,from,to,cats).then(raw=>{
+    rebuildViews(raw);
+    userLat=center.lat;
+    userLng=center.lng;
+    renderMapPinsInPlace(filterCats(displayEvs));
+    // Update OÙ field with reverse geocoded location (radius handled above)
+    revGeo(center.lat,center.lng).then(label=>{
+      if(label){
+        userLabel=label;
+        const si=document.getElementById('addr-input-sidebar');
+        if(si)si.value=label;
+        document.getElementById('addr-input').value=label;
+        const tl=document.getElementById('topbar-location');
+        if(tl)tl.textContent=label;
+        document.getElementById('dt-loc').textContent=label;
+      }
+    });
+  }).catch(()=>{});
+}
+
+// Jitter helper — slightly offsets duplicate coords so pins don't stack
+function jitterCoords(evs){
+  const seen={};
+  return evs.map(ev=>{
+    let lat=parseFloat(ev.lat), lng=parseFloat(ev.lng);
+    if(isNaN(lat)||isNaN(lng)) return ev;
+    const key=lat.toFixed(3)+','+lng.toFixed(3);
+    seen[key]=(seen[key]||0)+1;
+    if(seen[key]>1){
+      const angle=(seen[key]-1)*(2*Math.PI/8);
+      lat+=Math.cos(angle)*0.0003;
+      lng+=Math.sin(angle)*0.0003;
+    }
+    return {...ev, lat, lng};
+  });
+}
+
+// ── DEDUP + SORT ───────────────────────────────────────────────────────────
+// Multiple rows of the same event (one per day for a continuous/recurring event)
+// collapse into a single map pin + single list row. Identity = title + location.
+function eventKey(ev){
+  const t=(ev.title||'').toLowerCase().replace(/[^a-z0-9à-ÿ]+/gi,' ').trim();
+  const la=parseFloat(ev.lat), ln=parseFloat(ev.lng);
+  if(!isNaN(la)&&!isNaN(ln)) return t+'@'+la.toFixed(3)+','+ln.toFixed(3);
+  return t+'@'+(ev.city||'').toLowerCase();
+}
+function buildDisplayEvs(raw){
+  const groups=new Map();
+  for(const ev of (raw||[])){
+    const k=eventKey(ev);
+    if(!groups.has(k)) groups.set(k,[]);
+    groups.get(k).push(ev);
+  }
+  const out=[];
+  for(const occ of groups.values()){
+    occ.sort((a,b)=>String(a.starts_at||'').localeCompare(String(b.starts_at||'')));
+    const rep={...occ[0]};
+    // One entry per calendar day — drop duplicate rows that land on the same day
+    const seen=new Set(), dates=[];
+    for(const o of occ){
+      if(!o.starts_at)continue;
+      const day=String(o.starts_at).slice(0,10);
+      if(seen.has(day))continue;
+      seen.add(day);
+      dates.push(o.starts_at);
+    }
+    rep._dates=dates;
+    rep._count=dates.length;
+    out.push(rep);
+  }
+  // Chronological by first upcoming date, then by distance
+  out.sort((a,b)=>{
+    const da=String(a.starts_at||''), db=String(b.starts_at||'');
+    if(da!==db) return da<db?-1:1;
+    return (parseFloat(a.distance_km)||0)-(parseFloat(b.distance_km)||0);
+  });
+  out.forEach((ev,i)=>{ ev._did=i; });
+  return out;
+}
+function evById(did){ return displayEvs[did]; }
+// The DRAWER shows one row per day an event runs (a 7-day-open monument = 7 rows),
+// but each row still points to the single de-duplicated map pin via _did.
+function buildListEvs(){
+  const out=[];
+  for(const ev of displayEvs){
+    const dates=(ev._dates&&ev._dates.length)?ev._dates:[ev.starts_at];
+    for(const d of dates){ out.push({...ev, starts_at:d, _did:ev._did}); }
+  }
+  out.sort((a,b)=>{
+    const da=String(a.starts_at||''), db=String(b.starts_at||'');
+    if(da!==db) return da<db?-1:1;
+    return (parseFloat(a.distance_km)||0)-(parseFloat(b.distance_km)||0);
+  });
+  return out;
+}
+// Rebuild both views (pins + per-day list) from a fresh result set
+function rebuildViews(raw){
+  allEvs=raw;
+  displayEvs=buildDisplayEvs(raw);
+  listEvs=buildListEvs();
+}
+function filterCats(list){ return cats.length ? list.filter(e=>cats.includes(e.category)) : list; }
+// Human date string, range-aware for multi-day events
+function fmtWhen(ev){
+  // Running now (expo, installation…) → "EN COURS · jusqu'au 30 aoû"
+  if(isOngoing(ev)){
+    return `${t('enCours').toUpperCase()} · ${t('until')} ${new Date(ev.ends_at).getDate()} ${mon(ev.ends_at)}`;
+  }
+  const ds=(ev._dates&&ev._dates.length?ev._dates:[ev.starts_at]).filter(Boolean);
+  if(!ds.length) return '';
+  if(ds.length===1) return fmtDate(ds[0]);
+  const first=ds[0], last=ds[ds.length-1];
+  if(ds.length>=5) return `${fmtDate(first)} · ${t('ongoing')}`;
+  const d1=new Date(first), d2=new Date(last);
+  return `${d1.getDate()} ${mon(first)} – ${d2.getDate()} ${mon(last)}`;
+}
+// Time of day like "20h00", or '' for midnight/all-day
+function timeOf(s){const d=new Date(s);if(isNaN(d))return'';const h=d.getHours(),m=d.getMinutes();return (h===0&&m===0)?'':`${String(h).padStart(2,'0')}h${String(m).padStart(2,'0')}`;}
+// Date for the popup: multi-day events show the range; single-day events add the end time
+function fmtWhenFull(ev){
+  if(isOngoing(ev)) return fmtWhen(ev);
+  const ds=(ev._dates&&ev._dates.length?ev._dates:[ev.starts_at]).filter(Boolean);
+  if(ds.length>1) return fmtWhen(ev);
+  let out=fmtDate(ev.starts_at);
+  const st=timeOf(ev.starts_at), et=ev.ends_at?timeOf(ev.ends_at):'';
+  const sameDay=ev.ends_at&&String(ev.starts_at).slice(0,10)===String(ev.ends_at).slice(0,10);
+  if(sameDay&&st&&et&&et!==st) out+=`–${et}`;
+  return out;
+}
+
+// ── RADIUS ⇄ ZOOM (two-way binding) ────────────────────────────────────────
+function getDrawerH(){
+  const listEl=document.getElementById('drawer-list');
+  const tabEl=document.getElementById('drawer-tab');
+  return (drawerOpen&&listEl?listEl.offsetHeight:0)+(tabEl?tabEl.offsetHeight:54);
+}
+// km from map centre to the NEAREST visible edge = the radius the map is showing
+function viewportRadiusKm(){
+  const b=map.getBounds(), c=b.getCenter();
+  const edgeM=Math.min(
+    c.distanceTo(L.latLng(b.getNorth(), c.lng)),
+    c.distanceTo(L.latLng(c.lat, b.getEast()))
+  );
+  return Math.max(1, Math.round(edgeM/1000));
+}
+// km from centre to the CORNER — what we actually fetch, so corners aren't empty
+function viewportFetchKm(){
+  const b=map.getBounds(), c=b.getCenter();
+  return Math.max(2, Math.round(c.distanceTo(b.getNorthEast())/1000));
+}
+// Write a radius value into every place it's shown
+function setRadiusUI(km){
+  const slider=document.getElementById('radius-range');
+  if(slider){ const mn=+slider.min||5, mx=+slider.max||200; slider.value=Math.min(mx,Math.max(mn,km)); }
+  const rv=document.getElementById('radius-val'); if(rv)rv.textContent=km+' KM';
+  const hid=document.getElementById('radius-select-top'); if(hid)hid.value=km;
+  const tr=document.getElementById('topbar-radius'); if(tr)tr.textContent='· '+km+' km';
+}
+// Zoom so the visible radius ≈ km, centred on (lat,lng). animate:false → bounds are
+// correct immediately, so we can read the fetch radius right after.
+function zoomToRadius(lat,lng,km){
+  if(!map)return;
+  suppressMove=true;
+  map.invalidateSize({animate:false,pan:false}); // ensure size is current (drawer may have changed it) before centering
+  map.fitBounds(L.latLng(lat,lng).toBounds(km*2000),
+    {paddingTopLeft:[24,24],paddingBottomRight:[24,24],animate:false});
+  setTimeout(()=>{suppressMove=false;},900);
+}
+// The site only covers France. If we can't use the visitor's real location
+// (outside France, denied, or unsupported), we land them here instead.
+const FRANCE_DEFAULT = {lat:47.0261, lng:4.8357, label:"Beaune, Côte-d'Or"};
+function inFrance(lat,lng){
+  return lat>=41.0 && lat<=51.2 && lng>=-5.5 && lng<=9.7; // metropolitan France + Corsica
+}
+function goToFranceDefault(){
+  homeLat=FRANCE_DEFAULT.lat; homeLng=FRANCE_DEFAULT.lng;
+  const ai=document.getElementById('addr-input'); if(ai) ai.value=FRANCE_DEFAULT.label;
+  doSearch(FRANCE_DEFAULT.lat, FRANCE_DEFAULT.lng, FRANCE_DEFAULT.label);
+}
+// Recenter the map on the user's ACTUAL location (not the roaming search center).
+function recenterUser(){
+  if(!map) return;
+  if(homeLat!=null && homeLng!=null){
+    map.invalidateSize({animate:false,pan:false});
+    map.setView([homeLat,homeLng], Math.max(map.getZoom(), 11), {animate:true});
+  } else if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(async pos=>{
+      const lat=pos.coords.latitude, lng=pos.coords.longitude;
+      if(!inFrance(lat,lng)){ goToFranceDefault(); return; }
+      homeLat=lat; homeLng=lng;
+      const label=await revGeo(lat,lng);
+      const ai=document.getElementById('addr-input'); if(ai) ai.value=label||'';
+      doSearch(lat,lng,label);
+    }, ()=>goToFranceDefault());
+  }
+}
+// Fetch + redraw around a point (used by the slider) without re-zooming
+function fetchAndRender(lat,lng,fetchKm){
+  const{from,to}=dateRange();
+  showLoading();
+  return fetchEvs(lat,lng,fetchKm,from,to,cats).then(raw=>{
+    rebuildViews(raw);
+    userLat=lat; userLng=lng;
+    renderMapPinsInPlace(filterCats(displayEvs));
+    hideLoading();
+  }).catch(e=>{console.error(e);hideLoading();});
+}
+// Slider released → resize the map to that radius and re-search
+function applyRadius(km){
+  km=parseFloat(km)||25;
+  setRadiusUI(km);
+  if(map&&userLat!=null){
+    zoomToRadius(userLat,userLng,km);
+    fetchAndRender(userLat,userLng,viewportFetchKm());
+  }
+}
+
+// ── CLUSTER + PIN RENDERING ────────────────────────────────────────────────
+function renderMapPins(evs){
+  if(!map)return;
+  evs=jitterCoords(evs);
+  activeIdx=-1;
+
+  // User location pin — update without recreating
+  if(userMarker)map.removeLayer(userMarker);
+  if(userLat&&userLng){
+    userMarker=L.marker([userLat,userLng],{
+      icon:L.divIcon({className:'',html:'<div class="user-dot"></div>',iconSize:[12,12],iconAnchor:[6,6]}),
+      zIndexOffset:1000
+    }).addTo(map);
+  }
+
+  // Create cluster group once, or clear if exists
+  if(!clusterGroup){
+    clusterGroup=L.markerClusterGroup({
+      maxClusterRadius:30,
+    disableClusteringAtZoom:15,
+      animate:false,
+      animateAddingMarkers:false,
+      iconCreateFunction:function(cluster){
+        const count=cluster.getChildCount();
+        const sz=count<5?'sm':count<15?'md':'lg';
+        return L.divIcon({
+          html:`<div class="soirfr-cluster soirfr-cluster-${sz}">${count}</div>`,
+          className:'',
+          iconSize:[sz==='sm'?32:sz==='md'?40:50,sz==='sm'?32:sz==='md'?40:50],
+          iconAnchor:[sz==='sm'?16:sz==='md'?20:25,sz==='sm'?16:sz==='md'?20:25]
+        });
+      },
+      zoomToBoundsOnClick:true,spiderfyOnMaxZoom:true,showCoverageOnHover:false,
+    spiderfyDistanceMultiplier:2.5,
+    maxClusterRadius:30,
+    disableClusteringAtZoom:15
+    });
+    // Cluster click — always zoom in smoothly
+  clusterGroup.on('clusterclick', function(e) {
+    suppressMove = true;
+    const zoom = map.getZoom();
+    map.setView(e.latlng, Math.min(zoom + 2, 16), {animate: true, duration: 0.5});
+    setTimeout(() => { suppressMove = false; }, 1500);
+  });
+  map.addLayer(clusterGroup);
+  } else {
+    clusterGroup.clearLayers();
+  }
+
+  evs.forEach((ev)=>{
+    const lat=parseFloat(ev.lat),lng=parseFloat(ev.lng);
+    if(isNaN(lat)||isNaN(lng))return;
+    const did=ev._did;
+    const m=L.marker([lat,lng],{
+      icon:L.divIcon({className:'',html:`<div class="map-pin" id="pin-${did}" style="--pc:${catColor(ev.category)}">${catGlyph(ev.category)}</div>`,iconSize:[28,28],iconAnchor:[14,14]})
+    });
+    m._did=did;
+    m.on('click',()=>showPopup(did,m));
+    clusterGroup.addLayer(m);
+  });
+
+  // Zoom is governed by the radius (see zoomToRadius), not by the event spread.
+  refreshDrawer();
+}
+
+// Update pins without moving the map or destroying the cluster group
+function renderMapPinsInPlace(evs){
+  if(!map||!clusterGroup)return;
+  evs=jitterCoords(evs);
+  clusterGroup.clearLayers();
+  activeIdx=-1;
+
+  evs.forEach((ev)=>{
+    const lat=parseFloat(ev.lat),lng=parseFloat(ev.lng);
+    if(isNaN(lat)||isNaN(lng))return;
+    const did=ev._did;
+    const m=L.marker([lat,lng],{
+      icon:L.divIcon({className:'',html:`<div class="map-pin" id="pin-${did}" style="--pc:${catColor(ev.category)}">${catGlyph(ev.category)}</div>`,iconSize:[28,28],iconAnchor:[14,14]})
+    });
+    m._did=did;
+    m.on('click',()=>showPopup(did,m));
+    clusterGroup.addLayer(m);
+  });
+  // No fitBounds — map stays exactly where the user left it
+  refreshDrawer();
+}
+
+// ── POPUP (near pin, not corner) ──────────────────────────────────────────
+function showPopup(did,marker){
+  const ev=evById(did);if(!ev)return;
+
+  // Deactivate previous
+  if(activeIdx>=0){
+    const prev=document.getElementById(`pin-${activeIdx}`);
+    if(prev)prev.classList.remove('active');
+    document.querySelectorAll('.dl-item.active').forEach(el=>el.classList.remove('active'));
+  }
+  activeIdx=did;
+  const pin=document.getElementById(`pin-${did}`);
+  if(pin)pin.classList.add('active');
+
+  // Highlight drawer row
+  const row=document.querySelector(`.dl-item[data-did="${did}"]`);
+  if(row){row.classList.add('active');row.scrollIntoView({block:'nearest',behavior:'smooth'});}
+
+  const icon=catGlyph(ev.category);
+  const cc=catColor(ev.category);
+  const isFree=ev.is_free||ev.price_min===0;
+  // Classify the contact info. OpenAgenda's "registration" can be a web link,
+  // a phone number, or an email — each must be rendered differently, never as
+  // a raw href (a phone number as href reads as a path on our own site → 404).
+  const isWebUrl=u=>typeof u==='string'&&/^https?:\/\//i.test(u.trim());
+  const isEmail=u=>typeof u==='string'&&/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.trim());
+  const isPhone=u=>typeof u==='string'&&/^[+(]?\d[\d\s().-]{5,}$/.test(u.trim());
+  const bk=(ev.booking_url||'').trim();
+  const webLink=isWebUrl(ev.source_url)?ev.source_url.trim():(isWebUrl(bk)?bk:null);
+  const phone=(!isWebUrl(bk)&&isPhone(bk))?bk:null;
+  const email=isEmail(bk)?bk:null;
+  const dist=ev.distance_km?` · ${ev.distance_km} km`:'';
+  // Where: full street address when we have it, falling back to the town
+  const where=esc([ev.address,[ev.postcode,ev.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')||ev.city||'');
+  // What: description, stripped of any stray markup then escaped
+  const desc=ev.description?esc(String(ev.description).replace(/<[^>]*>/g,'').trim()):'';
+  const imgHtml=ev.image_url
+    ?`<img src="${esc(ev.image_url)}" alt="" data-ph="lp-img-ph" onclick="openImgModal(event,'${esc(ev.image_url)}')" onerror="imgFallback(this,'${esc(ev.category)}')">`
+    :`<div class="lp-img-ph" style="color:${cc}">${icon}</div>`;
+  const imgWrapClass=ev.image_url?'lp-img has-photo':'lp-img';
+
+  const mob=isMobile();
+  const popup=L.popup({
+    offset:[0,-6],maxWidth:mob?250:300,minWidth:mob?0:260,
+    className:'soirfr-popup'+(mob?' soirfr-popup-m':''),
+    closeButton:true,autoPan:true
+  })
+  .setLatLng(marker.getLatLng())
+  .setContent(`
+    <div class="${imgWrapClass}">${imgHtml}</div>
+    <div class="lp-body">
+      <div class="lp-cat" style="color:${cc}">${icon} ${catLabel(ev.category)}</div>
+      <div class="lp-title">${esc(ev.title)}</div>
+      <div class="lp-rule"></div>
+      ${ev.starts_at?`<div class="lp-meta-row"><span class="lp-meta-icon">📅</span>${fmtWhenFull(ev)}</div>`:''}
+      ${where?`<div class="lp-meta-row"><span class="lp-meta-icon">📍</span>${where}${dist}</div>`:''}
+      ${desc?`<div class="lp-desc">${desc}</div>`:''}
+    </div>
+    ${(phone||email)?`<div class="lp-contact">
+      ${phone?`<a class="lp-contact-row" href="tel:${esc(phone.replace(/[^\d+]/g,''))}"><span class="lp-meta-icon">📞</span>${esc(phone)}</a>`:''}
+      ${email?`<a class="lp-contact-row" href="mailto:${esc(email)}"><span class="lp-meta-icon">✉️</span>${esc(email)}</a>`:''}
+    </div>`:''}
+    <div class="lp-foot">
+      ${webLink?`<a class="lp-link" href="${esc(webLink)}" target="_blank" rel="noopener">${t('seeDetails')} →</a>`:'<span></span>'}
+      ${isFree?`<span class="lp-free">${t('free')}</span>`:''}
+    </div>
+  `)
+  .openOn(map);
+
+  popup.on('remove',()=>{
+    const p=document.getElementById(`pin-${did}`);
+    if(p)p.classList.remove('active');
+    if(activeIdx===did)activeIdx=-1;
+  });
+}
+
+// ── DRAWER ────────────────────────────────────────────────────────────────
+// Update drawer to show only events visible in current map viewport
+function updateDrawerWithVisible(){
+  if(!map||!listEvs.length)return;
+  const bounds=map.getBounds();
+  const visible=listEvs.filter(ev=>{
+    const lat=parseFloat(ev.lat),lng=parseFloat(ev.lng);
+    if(isNaN(lat)||isNaN(lng))return false;
+    return bounds.contains([lat,lng]);
+  });
+  const toShow=filterCats(visible);
+  updateDrawerTab(toShow,userLabel);
+  renderDrawerList(toShow);
+}
+
+function updateDrawerTab(evs,loc){
+  document.getElementById('dt-count').textContent=evs.length||'—';
+  document.getElementById('dt-label').textContent=t('events');
+  document.getElementById('dt-loc').textContent=loc||userLabel||'';
+}
+
+function renderDrawerList(evs){
+  const list=document.getElementById('drawer-list');
+  if(!evs||!evs.length){
+    list.innerHTML=`<div style="padding:20px;text-align:center;font-family:var(--fc);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--dust);">${t('noEvents')}</div>`;
+    return;
+  }
+  list.innerHTML=evs.map((ev)=>{
+    const icon=catGlyph(ev.category);
+    const cc=catColor(ev.category);
+    const isFree=ev.is_free||ev.price_min===0;
+    const dist=ev.distance_km?` · ${ev.distance_km} km`:'';
+    const thumb=ev.image_url
+      ?`<img src="${esc(ev.image_url)}" alt="" data-ph="dl-thumb-ph" onerror="imgFallback(this,'${esc(ev.category)}')">`
+      :`<div class="dl-thumb-ph" style="color:${cc}">${icon}</div>`;
+    // Ongoing events are happening TODAY — date block shows today, meta carries the range
+    const ong=isOngoing(ev);
+    const dateRef=ong?dateRange().from:ev.starts_at;
+    const metaBits=[ong?fmtWhen(ev):'',esc(ev.city||'')].filter(Boolean).join(' · ');
+    return `<div class="dl-item" data-did="${ev._did}" onclick="selectFromList(${ev._did})">
+      <div class="dl-date-block"><div class="dl-day">${fmtDay(dateRef)}</div><div class="dl-mon">${mon(dateRef)}</div></div>
+      <div class="dl-thumb">${thumb}</div>
+      <div class="dl-body">
+        <div class="dl-cat" style="color:${cc}">${icon} ${catLabel(ev.category)}</div>
+        <div class="dl-title">${esc(ev.title)}</div>
+        <div class="dl-meta">${metaBits}${dist}</div>
+      </div>
+      ${isFree?`<div class="dl-free"><span class="dl-free-tag">${t('free')}</span></div>`:''}
+    </div>`;
+  }).join('');
+}
+
+function selectFromList(did){
+  const ev=evById(did);if(!ev||ev.lat==null||ev.lng==null)return;
+  const lat=parseFloat(ev.lat),lng=parseFloat(ev.lng);
+  // Highlight in list
+  document.querySelectorAll('.dl-item').forEach(el=>el.classList.remove('active'));
+  const row=document.querySelector(`.dl-item[data-did="${did}"]`);
+  if(row)row.classList.add('active');
+  // Find the exact marker for this event and show popup WITHOUT moving map
+  // (only pan if the marker is outside the current view)
+  let found=false;
+  clusterGroup.eachLayer(m=>{
+    if(found)return;
+    if(m._did===did){
+      found=true;
+      const ll=m.getLatLng();
+      if(!map.getBounds().contains(ll)){
+        suppressMove=true;
+        map.panTo(ll,{animate:true});
+        setTimeout(()=>{suppressMove=false;showPopup(did,m);},400);
+      } else {
+        showPopup(did,m);
+      }
+    }
+  });
+  if(!found) showPopup(did,{getLatLng:()=>L.latLng(lat,lng)});
+}
+
+// Largest the list may grow — always leave some map visible
+function drawerMaxH(){
+  const area=document.getElementById('map-area');
+  const h=area?area.offsetHeight:window.innerHeight;
+  return Math.max(120, Math.round(h*0.8));
+}
+// Default open height: the whole drawer ≈ 40% of the map area (map stays the hero)
+function defaultDrawerH(){
+  const area=document.getElementById('map-area');
+  const h=(area&&area.offsetHeight)?area.offsetHeight:(window.innerHeight-56);
+  const grip=document.getElementById('drawer-grip'), tab=document.getElementById('drawer-tab');
+  const chrome=(grip?grip.offsetHeight:16)+(tab?tab.offsetHeight:54);
+  return Math.max(160, Math.min(drawerMaxH(), Math.round(h*0.40)-chrome));
+}
+// Apply a list height. animate=false (during drag) tracks the finger; true eases.
+function applyDrawerListH(px, animate){
+  const list=document.getElementById('drawer-list');
+  if(!list) return;
+  list.classList.toggle('dragging', animate===false);
+  list.style.height=px+'px';
+  if(map){ animate===false ? map.invalidateSize() : setTimeout(()=>map.invalidateSize(),320); }
+}
+function setDrawerOpen(open, animate){
+  drawerOpen=open;
+  const arrow=document.getElementById('dt-arrow'); if(arrow) arrow.classList.toggle('up', open);
+  const ttxt=document.getElementById('dt-toggle-txt'); if(ttxt) ttxt.textContent=open?t('hideList'):t('seeList');
+  applyDrawerListH(open?drawerListH:0, animate);
+}
+function toggleDrawer(){ setDrawerOpen(!drawerOpen, true); }
+
+// ── MOBILE FILTER PANEL ────────────────────────────────────────────────────
+// The left sidebar slides down over the map when "Filtres" is tapped.
+function toggleFilters(){
+  const sb=document.getElementById('sidebar');
+  const open=!sb.classList.contains('open');
+  sb.classList.toggle('open',open);
+  const bd=document.getElementById('filters-backdrop');
+  if(bd)bd.classList.toggle('open',open);
+}
+function closeFilters(){
+  document.getElementById('sidebar').classList.remove('open');
+  const bd=document.getElementById('filters-backdrop');
+  if(bd)bd.classList.remove('open');
+}
+// Keep the map sized correctly when the viewport changes (rotation, resize).
+let _resizeT=null;
+window.addEventListener('resize',function(){
+  clearTimeout(_resizeT);
+  _resizeT=setTimeout(function(){ if(map)map.invalidateSize(); },200);
+});
+
+// Drag the grip to resize; the map (flex:1 above) shrinks/grows to fit.
+function startDrawerDrag(e){
+  e.preventDefault();
+  const list=document.getElementById('drawer-list');
+  const startY=e.clientY, startH=list.offsetHeight, maxH=drawerMaxH();
+  function move(ev){
+    let h=Math.max(0, Math.min(maxH, startH+(startY-ev.clientY)));
+    if(h>0){ drawerOpen=true; drawerListH=h; }
+    applyDrawerListH(h, false);
+  }
+  function end(){
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', end);
+    const l=document.getElementById('drawer-list'); l.classList.remove('dragging');
+    const h=l.offsetHeight;
+    if(h<48){ drawerListH=260; setDrawerOpen(false, true); }
+    else{
+      drawerOpen=true; drawerListH=h;
+      const arrow=document.getElementById('dt-arrow'); if(arrow) arrow.classList.add('up');
+      const tt=document.getElementById('dt-toggle-txt'); if(tt) tt.textContent=t('hideList');
+      if(map) map.invalidateSize();
+    }
+  }
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', end);
+}
+
+function isMobile(){ return window.matchMedia('(max-width:860px)').matches; }
+
+// Keep the .on state of ALL category controls (desktop list + mobile chips)
+// consistent with the cats[] array, however the user toggles them.
+function syncCatUI(){
+  const none=cats.length===0;
+  document.querySelectorAll('.f-cat,.m-chip').forEach(b=>{
+    const c=b.getAttribute('data-cat');
+    if(c==='')b.classList.toggle('on',none);
+    else b.classList.toggle('on',cats.includes(c));
+  });
+}
+
+// On mobile the list shows the full result set (stable — it doesn't re-filter as
+// you pan); on desktop it filters to what's in the current viewport.
+function refreshDrawer(){
+  if(isMobile()){
+    const toShow=filterCats(listEvs);
+    updateDrawerTab(toShow,userLabel);
+    renderDrawerList(toShow);
+  } else {
+    updateDrawerWithVisible();
+  }
+}
+
+function pickCat(btn,c){
+  if(c===''){ cats=[]; }
+  else if(cats.includes(c)){ cats=cats.filter(x=>x!==c); }
+  else { cats.push(c); }
+  syncCatUI();
+  if(displayEvs.length){
+    renderMapPinsInPlace(filterCats(displayEvs));
+  }
+}
+
+// "Search this area" — mobile. Re-fetch for the current view without re-zooming,
+// then refresh the list once (instead of churning on every pan).
+function showSearchArea(){const b=document.getElementById('search-area-btn');if(b)b.style.display='inline-flex';}
+function hideSearchArea(){const b=document.getElementById('search-area-btn');if(b)b.style.display='none';}
+function searchThisArea(){ hideSearchArea(); searchInView(); }
+
+function showLoading(){document.getElementById('loading-cover').style.display='flex';}
+function hideLoading(){document.getElementById('loading-cover').style.display='none';}
+
+// ── MAP AUTO-PAN SEARCH ───────────────────────────────────────────────────
+function onMapMove(){
+  if(map&&!suppressMove&&userLat!=null)setRadiusUI(viewportRadiusKm());
+  if(isMobile()){
+    // Don't re-filter the list on every pan (jarring on a small screen).
+    // Offer an explicit "Search this area" instead, like Google Maps.
+    if(!suppressMove&&searchEnabled)showSearchArea();
+    return;
+  }
+  // Desktop: live viewport filtering + debounced auto-search
+  updateDrawerWithVisible();
+  if(!searchEnabled||suppressMove)return;
+  clearTimeout(moveTimer);
+  moveTimer=setTimeout(searchInView,900);
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────
+// ── ADDRESS AUTOCOMPLETE ──────────────────────────────────────────────────
+let acTimer=null;
+function onAddrInput(val, source='sidebar'){
+  clearTimeout(acTimer);
+  const listId = source==='mobile' ? 'm-ac-list' : 'autocomplete-list';
+  const list=document.getElementById(listId);
+  if(!val||val.length<2){if(list)list.style.display='none';return;}
+  acTimer=setTimeout(async()=>{
+    try{
+      const r=await fetch(`https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(val)}&limit=6&type=municipality`);
+      const d=await r.json();
+      const features=d.features||[];
+      if(!features.length){list.style.display='none';return;}
+      // data-* attributes instead of inline JS args — apostrophes in French place
+      // names (L'Isle-sur-Serein, L'Haÿ-les-Roses…) broke the old onclick string.
+      list.innerHTML=features.map(f=>{
+        const label=f.properties.label;
+        const dept=f.properties.context?.split(',')?.[0]||'';
+        return `<div class="ac-item" data-label="${esc(label)}" data-lat="${f.geometry.coordinates[1]}" data-lng="${f.geometry.coordinates[0]}" data-source="${esc(source)}"
+          style="padding:9px 14px;cursor:pointer;font-family:var(--fc);font-size:13px;font-weight:600;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;"
+          onmouseover="this.style.background='#F5F0E8'" onmouseout="this.style.background='white'">
+          <span>${esc(label)}</span>
+          <span style="font-size:11px;color:var(--dust);font-weight:400;">${esc(dept)}</span>
+        </div>`;
+      }).join('');
+      list.querySelectorAll('.ac-item').forEach(el=>{
+        el.addEventListener('click',()=>selectAddr(el.dataset.label,parseFloat(el.dataset.lat),parseFloat(el.dataset.lng),el.dataset.source));
+      });
+      list.style.display='block';
+    }catch(e){if(list)list.style.display='none';}
+  },250);
+}
+
+function selectAddr(label,lat,lng,source){
+  document.getElementById('addr-input').value=label;
+  const sb=document.getElementById('addr-input-sidebar');if(sb)sb.value=label;
+  const ms=document.getElementById('m-search');if(ms)ms.value=label;
+  const ls=document.getElementById('autocomplete-list');if(ls)ls.style.display='none';
+  const ml=document.getElementById('m-ac-list');if(ml)ml.style.display='none';
+  doSearch(lat,lng,label);
+}
+
+async function init(){
+  // Fill category button glyph chips from the SVG icon set (one source of truth)
+  document.querySelectorAll('.f-cat').forEach(b=>{
+    const c=b.getAttribute('data-cat');
+    const ci=b.querySelector('.ci');
+    if(ci&&c)ci.textContent=CAT_EMOJI[c]||'📍';
+  });
+  document.querySelectorAll('.m-chip').forEach(b=>{
+    const c=b.getAttribute('data-cat');
+    const mi=b.querySelector('.mi');
+    if(mi&&c)mi.textContent=CAT_EMOJI[c]||'📍';
+  });
+  // date-inp is hidden until user selects 'Date précise'
+  // Open drawer by default
+  drawerOpen = true;
+  drawerListH = defaultDrawerH();
+  document.getElementById('drawer-list').style.height = drawerListH + 'px';
+  document.getElementById('dt-arrow').classList.add('up');
+  const ttxt = document.getElementById('dt-toggle-txt');
+  if (ttxt) ttxt.textContent = t('hideList');
+  const grip = document.getElementById('drawer-grip');
+  if (grip) grip.addEventListener('pointerdown', startDrawerDrag);
+  document.getElementById('addr-input').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+
+  map=L.map('map',{zoomControl:false,attributionControl:false}).setView([46.8,2.3],6);
+  // Map now physically resizes with the drawer, so it just needs a redraw after layout settles.
+  function updateMapPadding(){ if(map) map.invalidateSize(); }
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',{
+    attribution:'© OpenStreetMap contributors © CARTO',maxZoom:19,
+    subdomains:'abcd'
+  }).addTo(map);
+  L.control.zoom({position:'bottomright'}).addTo(map);
+  // "Locate me" button stacked under the zoom controls
+  const LocateControl = L.Control.extend({
+    options:{position:'bottomright'},
+    onAdd:function(){
+      const wrap=L.DomUtil.create('div','leaflet-bar');
+      const btn=L.DomUtil.create('button','locate-btn',wrap);
+      btn.type='button'; btn.title='Recentrer sur ma position'; btn.innerHTML='⌖';
+      L.DomEvent.on(btn,'click',function(e){ L.DomEvent.stop(e); recenterUser(); });
+      L.DomEvent.disableClickPropagation(wrap);
+      return wrap;
+    }
+  });
+  map.addControl(new LocateControl());
+  map.on('moveend',onMapMove);
+  setTimeout(()=>{ if(map) map.invalidateSize(); }, 80);
+
+  // Enable auto-search after 4s (after first load settles)
+  setTimeout(()=>{searchEnabled=true;},4000);
+
+  if(navigator.geolocation){
+    navigator.geolocation.getCurrentPosition(
+      async pos=>{
+        const lat=pos.coords.latitude,lng=pos.coords.longitude;
+        if(!inFrance(lat,lng)){ goToFranceDefault(); return; }
+        homeLat=lat; homeLng=lng;
+        const label=await revGeo(lat,lng);
+        document.getElementById('addr-input').value=label||'';
+        doSearch(lat,lng,label);
+      },
+      ()=>goToFranceDefault(),
+      {timeout:4000,maximumAge:120000}
+    );
+  }else{
+    goToFranceDefault();
+  }
+}
+
+init();
+</script>
+</body>
+</html>
