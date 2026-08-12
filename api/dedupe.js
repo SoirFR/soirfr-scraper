@@ -408,6 +408,16 @@ module.exports = async function handler(req, res) {
     gained: g.gained_from,
   }));
 
+  // Some sources deliver a commune and a postcode but no coordinates.
+  // ST_DWithin can never match a null location, so those events are invisible
+  // on the map. Convert the commune to a point once, here, before the pages
+  // rebuild, rather than teaching the frontend about town names.
+  let geocoded = null;
+  if (apply) {
+    geocoded = await backfillCoordinates();
+    console.log('[dedupe] geocode ' + JSON.stringify(geocoded));
+  }
+
   // Rebuild the static place pages so they carry tonight's events. Only after
   // a real apply run, never on a dry run and never on ?report=1, which returns
   // long before this. A failed rebuild must not fail the merge, but it must
@@ -428,7 +438,7 @@ module.exports = async function handler(req, res) {
     console.log('[dedupe] frontend rebuild ' + rebuild);
   }
 
-  return res.status(200).json({ ...summary, rebuild, sample });
+  return res.status(200).json({ ...summary, geocoded, rebuild, sample });
 };
 
 // ── matching ──────────────────────────────────────────────────────────────
@@ -620,4 +630,63 @@ async function hFirstDate(filter) {
   if (!r.ok) return null;
   const rows = await r.json();
   return rows && rows[0] ? String(rows[0].starts_at).slice(0, 10) : null;
+}
+
+// ── coordinates backfill ───────────────────────────────────────────────────
+// Commune plus postcode is unambiguous: "Saint-Pierre" is dozens of places,
+// "Saint-Pierre 39150" is exactly one. Uses the French government's address
+// API, which is free and needs no key.
+const GEO_LIMIT = 25;   // per run; the backlog is normally a handful
+
+async function backfillCoordinates() {
+  const out = { candidates: 0, fixed: 0, not_found: 0, collided: 0, errors: [] };
+
+  const r = await fetch(
+    `${SB_URL}/rest/v1/events?select=id,city,postcode` +
+    `&status=eq.active&location=is.null&city=not.is.null&postcode=not.is.null` +
+    `&limit=${GEO_LIMIT}`,
+    { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
+  );
+  if (!r.ok) {
+    out.errors.push(`load ${r.status}: ${(await r.text()).slice(0, 200)}`);
+    return out;
+  }
+  const rows = await r.json();
+  out.candidates = rows.length;
+
+  for (const row of rows) {
+    try {
+      const q = new URLSearchParams({
+        q: String(row.city),
+        postcode: String(row.postcode),
+        type: 'municipality',
+        limit: '1',
+      });
+      const g = await fetch(`https://api-adresse.data.gouv.fr/search/?${q}`);
+      if (!g.ok) { out.errors.push(`ban ${g.status}`); continue; }
+      const j = await g.json();
+      const hit = j && j.features && j.features[0];
+      // A corrupted city, like a title pasted into the field, simply misses.
+      if (!hit || !hit.geometry) { out.not_found++; continue; }
+      const [lng, lat] = hit.geometry.coordinates;
+      if (!Number.isFinite(lng) || !Number.isFinite(lat)) { out.not_found++; continue; }
+
+      const u = await fetch(`${SB_URL}/rest/v1/events?id=eq.${row.id}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`,
+          'Content-Type': 'application/json', Prefer: 'return=minimal',
+        },
+        body: JSON.stringify({ location: `SRID=4326;POINT(${lng} ${lat})` }),
+      });
+      // Writing coordinates recomputes the dedup key. If that collides with an
+      // existing active row, leave this one alone rather than forcing it.
+      if (u.status === 409) { out.collided++; continue; }
+      if (!u.ok) { out.errors.push(`patch ${u.status}`); continue; }
+      out.fixed++;
+    } catch (e) {
+      out.errors.push(e.message);
+    }
+  }
+  return out;
 }
